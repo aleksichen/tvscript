@@ -1,0 +1,20 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+authors = ["aleksichen <aleksichen@gmail.com>"]
+edition = "2021"
+
+[workspace.dependencies]
+
+# Enable extra optimizations for release builds
+[profile.release]
+codegen-units = 1
+lto = true
+
+# Re-enables default release profile settings, used for CI and local testing
+[profile.release-dev]
+inherits = "release"
+codegen-units = 16
+lto = false

@@ -1,0 +1,10 @@
+(* 程序由0个或者多个语句组成 *)
+Program = { Statement };
+
+(* 语句可以是声明或者表达式 *)
+Statement = Declaration | Expression;
+
+(* 声明可以是变量声明或者函数声明 *)
+Declaration = VariableDecl | FunctionDecl;
+
+(* 变量声明 *)

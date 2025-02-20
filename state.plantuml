@@ -1,0 +1,68 @@
+@startuml
+
+'=== 状态定义 ===
+state Initial
+state InInteger
+state InFloat {
+    state Mantissa : 尾数部分\n(必须包含小数点)
+    state ExponentMarker : 遇到e/E
+    state ExponentSign : 处理符号\n(+/-)
+    state ExponentDigit : 指数数字
+    [*] --> Mantissa
+    Mantissa --> ExponentMarker : e/E
+    ExponentMarker --> ExponentSign : +/-
+    ExponentSign --> ExponentDigit : 数字
+    ExponentMarker --> ExponentDigit : 数字（无符号）
+    ExponentDigit --> ExponentDigit : 数字
+}
+state InIdentifier
+state InSlash
+state InOperator
+state InPossibleOp
+state InCommentSingle
+
+'=== 初始状态转换 ===
+[*] --> Initial
+Initial --> InInteger: 数字(0-9)
+Initial --> InIdentifier: 字母或下划线(a-zA-z, _)
+Initial --> InSlash: 斜杠(/)
+Initial --> InOperator: 运算符字符（=, >, ! 等）
+Initial --> InString: 双引号("")
+
+'=== 详细转换规则 ===
+' 1. 数字处理
+InInteger --> InInteger: 数字
+InInteger --> InFloat: .\n转浮点处理
+InInteger --> Initial: 非数字/.\n生成Integer
+
+' 2. 浮点数处理
+InFloat --> Mantissa: 进入浮点处理
+Mantissa --> Mantissa: 数字
+Mantissa --> ExponentMarker: e/E\n开始指数
+ExponentMarker --> ExponentSign: +/-\n记录符号
+ExponentSign --> ExponentDigit: 数字\n开始指数
+ExponentMarker --> ExponentDigit: 数字\n（无符号）
+ExponentDigit --> ExponentDigit: 数字
+InFloat --> Initial: 合法结束\n生成Float
+InFloat --> Initial: 非法字符\n生成Error
+
+' 3. 标识符处理
+InIdentifier --> InIdentifier: 字母、数字、下划线
+InIdentifier --> Initial: 非标识符字符 (回退生成 Identifier Token)
+
+' 4. 斜杠处理（注释或运算符）
+InSlash --> InCommentSingle: 第二个 /
+InSlash --> InOperator: 非 / 或 * (回退生成 / Token)
+InSlash --> InCommentMulti: * （多行注释，需补充逻辑）
+
+' 5. 单行注释处理
+InCommentSingle --> InCommentSingle: 非换行符
+InCommentSingle --> Initial: 换行符 (生成 Comment Token)
+
+' 6. 运算符处理
+InOperator --> InPossibleOp: 下一个字符可组合（如 = 后跟 =）
+InOperator --> Initial: 无法组合 (生成单字符 Token)
+InPossibleOp --> Initial: 合法组合 (生成多字符 Token)
+InPossibleOp --> Initial: 非法组合 (回退生成单字符 Token)
+
+@enduml
