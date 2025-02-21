@@ -1,8 +1,6 @@
 // src/fsm/mod.rs
-mod state;
-mod processor;
-mod transition;
+pub mod state;
+pub mod processor;
 
 pub use state::State;
 pub use processor::StateProcessor;
-pub use transition::TransitionHandler;

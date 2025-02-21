@@ -6,11 +6,8 @@ pub enum State {
     InIdentifier,
     InSlash,
     InOperator,
-    InPossibleOp,
     InComment,
-    KeywordOrIdentifier,
     StringLiteral,
-    Dot,
 }
 
 #[derive(Clone, PartialEq)]

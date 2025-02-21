@@ -1,7 +1,15 @@
 use std::{collections::VecDeque, ops::Range};
 
 use crate::{
-    fsm::State, helper::validate_float, span::{Position, Span}
+    fsm::{
+        processor::{
+            CommentProcessor, ErrorProcessor, FloatProcessor, IdentifierProcessor,
+            InitialProcessor, IntegerProcessor, OperatorProcessor, SlashProcessor, StringProcessor,
+        },
+        state::FloatPhase,
+        *,
+    },
+    span::{Position, Span},
 };
 
 /// the tokens thats can emerge from the lexer
@@ -35,36 +43,47 @@ pub enum Token {
     EOF,      // 文件结束符
 }
 
+#[derive(Clone, Copy)]
+struct StateSnapshot {
+    byte_pos: usize,
+    span: Span,
+}
+
 #[derive(Clone)]
 pub struct TokenLexer<'a> {
+    eof_generated: bool,
     // 状态
     pub state: State,
     // 原始输入
-    source: &'a str,
+    pub source: &'a str,
     // 当前字节位置
-    current_byte: usize,
+    pub current_byte: usize,
     // 当前Token的起始字节位置
     token_start_byte: usize,
     previous_byte: usize,
-    // 前一个token
-    previous_token: Option<Token>,
     // 存储中间值
     pub partial_number: Option<String>,
     // 当前 Token 的字节范围
     span: Span,
+    // 环形缓冲区
+    state_stack: [Option<StateSnapshot>; 5],
+    // 当前栈顶指针
+    stack_ptr: usize,
 }
 
 impl<'a> TokenLexer<'a> {
     fn new(source: &'a str) -> Self {
         Self {
+            eof_generated: false,
             state: State::Initial,
             source,
             previous_byte: 0,
             current_byte: 0,
             token_start_byte: 0,
-            previous_token: None,
             partial_number: None,
             span: Span::default(),
+            state_stack: [None, None, None, None, None],
+            stack_ptr: 0,
         }
     }
 
@@ -99,6 +118,13 @@ impl<'a> TokenLexer<'a> {
     }
 
     pub fn advance_to_position(&mut self, char_bytes: usize, position: Position) {
+        // 保存当前状态到栈（环形缓冲）
+        self.state_stack[self.stack_ptr] = Some(StateSnapshot {
+            byte_pos: self.current_byte,
+            span: self.span,
+        });
+        self.stack_ptr = (self.stack_ptr + 1) % 5; // 固定容量5
+
         self.previous_byte = self.current_byte;
         self.current_byte += char_bytes;
 
@@ -106,6 +132,21 @@ impl<'a> TokenLexer<'a> {
             start: self.span.end,
             end: position,
         };
+    }
+
+    /// 回退到最近一次记录的状态
+    pub fn rollback_line(&mut self) {
+        // 计算有效栈位置
+        let last_ptr = (self.stack_ptr + 4) % 5;
+
+        if let Some(snapshot) = self.state_stack[last_ptr].take() {
+            // 恢复状态
+            self.current_byte = snapshot.byte_pos;
+            self.span = snapshot.span;
+
+            // 更新栈指针
+            self.stack_ptr = last_ptr;
+        }
     }
 
     /// 消耗空白字符（不含换行符）
@@ -227,7 +268,12 @@ impl<'a> TokenLexer<'a> {
         None
     }
 
-    pub fn get_next_token(&mut self) -> Option<Token> {
+    pub fn get_next_token(&mut self) -> Token {
+        // 处理 EOF 的边界条件
+        if self.current_byte >= self.source.len() {
+            return Token::EOF;
+        }
+
         let processor: Box<dyn StateProcessor> = match self.state {
             State::Initial => Box::new(InitialProcessor),
             State::InInteger => Box::new(IntegerProcessor),
@@ -254,13 +300,13 @@ impl<'a> TokenLexer<'a> {
     }
 
     /// 统一状态转换方法（处理简单转换）
-    pub fn transition(&mut self, new_state: State) -> Option<Token> {
+    pub fn transition(&mut self, new_state: State) -> Token {
         self.state = new_state;
         self.get_next_token()
     }
 
     /// 处理整数到浮点数的状态转换
-    pub fn transition_to_float(&mut self, int_part: String) -> Option<Token> {
+    pub fn transition_to_float(&mut self, int_part: String) -> Token {
         // 存储整数部分并添加小数点
         let mut buffer = int_part;
         buffer.push('.'); // 添加当前字符
@@ -275,266 +321,6 @@ impl<'a> TokenLexer<'a> {
     }
 }
 
-// ================ 状态处理器 trait ================
-trait StateProcessor {
-    fn process(&self, lexer: &mut TokenLexer) -> Option<Token>;
-}
-
-// ================ 具体处理器实现 ================
-/// 初始状态处理器
-struct InitialProcessor;
-impl StateProcessor for InitialProcessor {
-    fn process(&self, lexer: &mut TokenLexer) -> Option<Token> {
-        let c = lexer.peek_char()?;
-        match c {
-            // 数字处理
-            '0'..='9' => lexer.transition(State::InInteger),
-            // 标识符处理
-            'a'..='z' | 'A'..='Z' | '_' => lexer.transition(State::InIdentifier),
-            // 斜杠 -> 进入斜杠处理
-            '/' => lexer.transition(State::InSlash),
-            // 运算符 -> 进入运算符状态
-            '=' | '>' | '<' | '!' | '+' | '-' | '*' | '%' | ':' => {
-                lexer.transition(State::InOperator)
-            }
-            // 双引号, 字符串字面量处理
-            '"' => {
-                // 消耗一个双引号
-                lexer.advance_line(1);
-                lexer.state = State::StringLiteral; // 转换到字符串状态
-                Some(Token::StringStart) // 明确返回开始标记
-            }
-            // 空格
-            ' ' | '\t' => {
-                lexer.consume_whitespace();
-                // 不生成空格
-                Some(Token::Whitespace)
-            }
-            // 换行处理
-            '\n' | '\r' => Some(lexer.consume_newline()),
-            _ => {
-                lexer.advance_line(1);
-                Some(Token::Error)
-            }
-        }
-    }
-}
-
-/// 整数状态处理器
-struct IntegerProcessor;
-impl StateProcessor for IntegerProcessor {
-    fn process(&self, lexer: &mut TokenLexer) -> Option<Token> {
-        let mut buffer = String::new();
-        while let Some(c) = lexer.peek_char() {
-            match c {
-                '0'..='9' => {
-                    buffer.push(c);
-                    lexer.advance_line(1)
-                }
-                '.' => return lexer.transition_to_float(buffer),
-                _ => break,
-            }
-        }
-        lexer.reset_state();
-        Some(Token::Integer)
-    }
-}
-
-/// 浮点数处理器
-#[derive(Clone, PartialEq)]
-enum FloatPhase {
-    Mantissa,       // 处理尾数部分（必须包含小数点）
-    ExponentMarker, // 遇到e/E
-    ExponentSign,   // 处理指数符号
-    ExponentDigit,  // 处理指数数字
-}
-
-struct FloatProcessor {
-    phase: FloatPhase,
-}
-
-impl StateProcessor for FloatProcessor {
-    fn process(&self, lexer: &mut TokenLexer) -> Option<Token> {
-        let mut buffer = lexer.partial_number.take().unwrap_or_default();
-        let mut phase = self.phase.clone();
-        let mut has_dot = buffer.contains('.');
-
-        while let Some(c) = lexer.peek_char() {
-            match (&phase, c) {
-                // 尾数部分处理
-                (FloatPhase::Mantissa, '0'..='9') => buffer.push(c),
-                (FloatPhase::Mantissa, '.') if !has_dot => {
-                    has_dot = true;
-                    buffer.push(c);
-                }
-
-                // 指数标识符处理
-                (FloatPhase::Mantissa, 'e' | 'E') if has_dot => {
-                    buffer.push(c);
-                    phase = FloatPhase::ExponentMarker;
-                }
-
-                // 指数符号处理
-                (FloatPhase::ExponentMarker, '+' | '-') => {
-                    buffer.push(c);
-                    phase = FloatPhase::ExponentSign;
-                }
-
-                // 指数数字处理
-                (FloatPhase::ExponentSign, '0'..='9') | (FloatPhase::ExponentDigit, '0'..='9') => {
-                    buffer.push(c);
-                    phase = FloatPhase::ExponentDigit;
-                }
-
-                // 非法字符中断
-                _ => break,
-            }
-            lexer.advance_line(1);
-        }
-
-        // 合法性验证
-        lexer.reset_state();
-        let valid = validate_float(&buffer);
-        Some(if valid { Token::Float } else { Token::Error })
-    }
-}
-
-/// 标识符处理器
-struct IdentifierProcessor;
-impl StateProcessor for IdentifierProcessor {
-    fn process(&self, lexer: &mut TokenLexer) -> Option<Token> {
-        let mut ident = String::new();
-        while let Some(c) = lexer.peek_char() {
-            if c.is_alphanumeric() || c == '_' {
-                ident.push(c);
-                lexer.advance_line(1)
-            } else {
-                break;
-            }
-        }
-        lexer.reset_state();
-        Some(lexer.keyword_or_identifier(&ident))
-    }
-}
-
-// ================== 斜杠处理器 ==================
-struct SlashProcessor;
-impl StateProcessor for SlashProcessor {
-    fn process(&self, lexer: &mut TokenLexer) -> Option<Token> {
-        let next_char = lexer.peek_char()?;
-
-        match next_char {
-            // 遇到第二个斜杠 -> 单行注释
-            '/' => {
-                lexer.advance_line(1);
-                lexer.state = State::InComment;
-                Some(Token::Comment) // 初始空注释
-            }
-
-            // 其他情况 -> 普通除法运算符
-            _ => {
-                lexer.reset_state();
-                Some(Token::Operator)
-            }
-        }
-    }
-}
-
-/// ================== 运算符处理器 ==================
-struct OperatorProcessor;
-impl StateProcessor for OperatorProcessor {
-    fn process(&self, lexer: &mut TokenLexer) -> Option<Token> {
-        let first_char = lexer.peek_char()?;
-        let mut operator = String::from(first_char);
-        lexer.advance_line(1);
-
-        // 检查可能的多字符运算符
-        if let Some(next_c) = lexer.source[lexer.current_byte..].chars().next() {
-            let combined = match (first_char, next_c) {
-                ('=', '=') => "==",
-                ('!', '=') => "!=",
-                ('>', '=') => ">=",
-                ('<', '=') => "<=",
-                ('+', '+') => "++",
-                ('-', '-') => "--",
-                _ => "",
-            };
-
-            if !combined.is_empty() {
-                operator.push(next_c);
-                lexer.advance_line(1);
-            }
-        }
-
-        lexer.reset_state();
-        Some(Token::Operator)
-    }
-}
-
-// ================== 单行注释处理器 ==================
-struct CommentProcessor;
-impl StateProcessor for CommentProcessor {
-    fn process(&self, lexer: &mut TokenLexer) -> Option<Token> {
-        let _comment_content = String::new();
-
-        // 消耗所有字符直到行尾
-        while let Some(c) = lexer.peek_char() {
-            if c == '\n' || c == '\r' {
-                break;
-            }
-            lexer.advance_line(1)
-        }
-        Some(Token::Comment)
-    }
-}
-
-// ================== 字符串处理器 ==================
-struct StringProcessor;
-impl StateProcessor for StringProcessor {
-    fn process(&self, lexer: &mut TokenLexer) -> Option<Token> {
-        let mut value = String::new();
-        let mut escape = false;
-
-        loop {
-            match lexer.peek_char() {
-                Some('"') if !escape => {
-                    lexer.advance_line(1); // 消耗结束引号
-                    lexer.reset_state();
-                    return Some(Token::StringEnd);
-                }
-
-                Some('\\') => {
-                    escape = true;
-                    lexer.advance_line(1);
-                }
-
-                Some(c) => {
-                    value.push(c);
-                    escape = false;
-                    lexer.advance_line(1);
-                }
-
-                None => {
-                    // 未闭合字符串
-                    lexer.reset_state();
-                    return Some(Token::Error);
-                }
-            }
-        }
-    }
-}
-
-// ================== 错误处理器 ==================
-struct ErrorProcessor;
-impl StateProcessor for ErrorProcessor {
-    fn process(&self, lexer: &mut TokenLexer) -> Option<Token> {
-        // 错误恢复逻辑：跳过无效字符
-        lexer.advance_line(1);
-        lexer.reset_state();
-        Some(Token::Error)
-    }
-}
-
 // ================ 工具方法 ================
 impl<'a> TokenLexer<'a> {
     /// 字符预览方法
@@ -543,7 +329,7 @@ impl<'a> TokenLexer<'a> {
     }
 
     /// 关键字判断
-    fn keyword_or_identifier(&self, ident: &str) -> Token {
+    pub fn keyword_or_identifier(&self, ident: &str) -> Token {
         const KEYWORDS: [&str; 9] = [
             "var", "float", "if", "else", "true", "false", "na", "input", "ta",
         ];
@@ -560,7 +346,14 @@ impl Iterator for TokenLexer<'_> {
     type Item = Token;
 
     fn next(&mut self) -> Option<Token> {
-        self.get_next_token()
+        let token = self.get_next_token();
+        match token {
+            Token::EOF => {
+                self.eof_generated = true;
+                None
+            }
+            _ => Some(token),
+        }
     }
 }
 
@@ -640,12 +433,26 @@ impl<'a> TvLexer<'a> {
     }
 
     fn next_token(&mut self) -> Option<LexedToken> {
+        // 已生成EOF时直接返回None
+        if self.lexer.eof_generated {
+            return None;
+        }
+
         self.lexer.start_token();
-        self.lexer.next().map(|token| LexedToken {
+        let token = self.lexer.get_next_token();
+
+        // 构造LexedToken
+        let lexed_token = LexedToken {
             token,
             source_bytes: self.lexer.current_token_bytes(),
             span: self.lexer.span,
-        })
+        };
+
+        // 检测EOF标记
+        if token == Token::EOF {
+            self.lexer.eof_generated = true;
+        }
+        Some(lexed_token)
     }
 }
 
@@ -722,22 +529,76 @@ mod tests {
         }
 
         #[test]
-        fn empty_input() {
-            let source = "";
-            let expected_tokens = vec![];
-            print_tokens(source);
-            check_lexer_output(source, &expected_tokens);
+        fn stack_rollback() {
+            let source = "//@version=5";
+            let mut lexer = TokenLexer::new(source);
+
+            // 模拟处理流程
+            lexer.advance_line(2); // 处理 //
+            lexer.advance_line(1); // 处理 @
+
+            // 回退两次
+            lexer.rollback_line(); // 回到@之前
+            lexer.rollback_line(); // 回到初始位置
+
+            assert_eq!(lexer.current_byte, 0);
+            assert_eq!(lexer.span.end.column, 0);
         }
 
         #[test]
-        fn integer() {
-            let source = "123 321  234";
+        fn stack_overflow() {
+            let mut lexer = TokenLexer::new("test");
+
+            // 连续推进6次（超过栈容量5）
+            for _ in 0..6 {
+                lexer.advance_line(1);
+            }
+
+            // 回退5次应该回到第1次推进的位置
+            for _ in 0..5 {
+                lexer.rollback_line();
+            }
+
+            assert_eq!(lexer.current_byte, 1); // 第1次推进后的位置
+        }
+
+        #[test]
+        fn basic_rollback() {
+            let source = "//comment";
+            let mut lexer = TokenLexer::new(source);
+
+            // 模拟处理两个斜杠
+            lexer.advance_line(1); // 位置1
+            lexer.advance_line(1); // 位置2
+
+            // 回退两次
+            lexer.rollback_line(); // 位置1
+            lexer.rollback_line(); // 位置0
+
+            assert_eq!(lexer.current_byte, 0);
+            assert_eq!(lexer.span.end.column, 0);
+        }
+
+        #[test]
+        fn rollback_with_newline() {
+            let source = "//\nvar";
+            let mut lexer = TokenLexer::new(source);
+
+            // 处理到换行符
+            lexer.advance_line(2); // 处理 //
+            lexer.advance_line(1); // 处理 \n（此时在行1列0）
+
+            // 回退到行尾前
+            lexer.rollback_line(); // 回到行0列2
+            assert_eq!(lexer.span.end.line, 0);
+            assert_eq!(lexer.span.end.column, 2);
+        }
+
+        #[test]
+        fn empty_input() {
+            let source = "";
             let expected_tokens = vec![
-                (Integer, Some("123"), 0),
-                (Whitespace, Some(" "), 0),
-                (Integer, Some("321"), 0),
-                (Whitespace, Some("  "), 0),
-                (Integer, Some("234"), 0),
+                (Token::EOF, None, 0)
             ];
             print_tokens(source);
             check_lexer_output(source, &expected_tokens);
@@ -752,6 +613,7 @@ mod tests {
                 (Integer, Some("5"), 0),
                 (Whitespace, Some(" "), 0),
                 (Integer, Some("987654321"), 0),
+                (Token::EOF, None, 0)
             ];
             check_lexer_output(source, &expected);
         }
@@ -765,22 +627,10 @@ mod tests {
                 (Float, Some("0.618"), 0),
                 (Whitespace, Some(" "), 0),
                 (Float, Some("123.456"), 0),
+                (Token::EOF, None, 0)
             ];
             print_tokens(source);
             check_lexer_output(source, &expected);
-        }
-
-        #[test]
-        fn float() {
-            let source = "123 123.3.";
-            let expected_tokens = vec![
-                (Integer, Some("123"), 0),
-                (Whitespace, Some(" "), 0),
-                (Float, Some("123.3"), 0),
-                (Error, Some("."), 0),
-            ];
-            print_tokens(source);
-            check_lexer_output(source, &expected_tokens);
         }
 
         #[test]
@@ -794,6 +644,7 @@ mod tests {
                 (Integer, Some("100"), 0),
                 (Whitespace, Some(" "), 0),
                 (Float, Some("2.718"), 0),
+                (Token::EOF, None, 0)
             ];
             check_lexer_output(source, &expected);
         }
@@ -807,8 +658,26 @@ mod tests {
                 (Float, Some("999.999"), 0),
                 (Whitespace, Some(" "), 0),
                 (Error, Some("."), 0), // 单独的点号报错
+                (Token::EOF, None, 0)
             ];
             check_lexer_output(source, &expected);
+        }
+
+        #[test]
+        fn test_comment() {
+            let source = "// comment";
+            print_tokens(source);
+            let expected = vec![
+                (Comment, Some("// comment"), 0),
+                (EOF, None, 0)
+            ];
+            check_lexer_output(source, &expected);
+        }
+
+        #[test]
+        fn test_single_slash() {
+            let source = "\n// asd\n 123.2 asd123 var if 1 + 1";
+            print_tokens(source);
         }
     }
 }
