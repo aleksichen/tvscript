@@ -4,7 +4,8 @@ use crate::{
     fsm::{
         processor::{
             CommentProcessor, ErrorProcessor, FloatProcessor, IdentifierProcessor,
-            InitialProcessor, IntegerProcessor, OperatorProcessor, SlashProcessor, StringProcessor,
+            InAssignProcessor, InitialProcessor, IntegerProcessor, OperatorProcessor,
+            SlashProcessor, StringProcessor,
         },
         state::FloatPhase,
         *,
@@ -34,13 +35,19 @@ pub enum Token {
     Float,   // 浮点数
 
     // 符号
-    LParen,   // 左括号: (
-    RParen,   // 右括号: )
-    LBracket, // 左方括号: [
-    RBracket, // 右方括号: ]
-    Comma,    // 逗号: ,
-    Dot,      // 点号: .
-    EOF,      // 文件结束符
+    Colon,
+    Comma,
+    Dot,
+    Function,
+    RoundOpen,
+    RoundClose,
+    SquareOpen,
+    SquareClose,
+    CurlyOpen,
+    CurlyClose,
+    QuestionMark,
+
+    EOF, // 文件结束符
 }
 
 #[derive(Clone, Copy)]
@@ -251,7 +258,7 @@ impl<'a> TokenLexer<'a> {
         Token::NewLine
     }
 
-    fn consume_symbol(&mut self, remaining: &str) -> Option<Token> {
+    pub fn consume_symbol(&mut self, remaining: &str) -> Option<Token> {
         use Token::*;
 
         macro_rules! check_symbol {
@@ -263,7 +270,17 @@ impl<'a> TokenLexer<'a> {
             };
         }
 
-        check_symbol!("=", Assign);
+        check_symbol!(":", Colon);
+        check_symbol!(",", Comma);
+        check_symbol!(".", Dot);
+        check_symbol!("?", QuestionMark);
+        check_symbol!("(", RoundOpen);
+        check_symbol!(")", RoundClose);
+        check_symbol!("|", Function);
+        check_symbol!("[", SquareOpen);
+        check_symbol!("]", SquareClose);
+        check_symbol!("{", CurlyOpen);
+        check_symbol!("}", CurlyClose);
 
         None
     }
@@ -283,9 +300,10 @@ impl<'a> TokenLexer<'a> {
             State::InIdentifier => Box::new(IdentifierProcessor),
             State::InSlash => Box::new(SlashProcessor),
             State::InOperator => Box::new(OperatorProcessor),
+            State::InAssign => Box::new(InAssignProcessor),
             State::InComment => Box::new(CommentProcessor),
             State::StringLiteral => Box::new(StringProcessor),
-            _ => Box::new(ErrorProcessor),
+            // _ => Box::new(ErrorProcessor),
         };
 
         processor.process(self)
@@ -597,9 +615,7 @@ mod tests {
         #[test]
         fn empty_input() {
             let source = "";
-            let expected_tokens = vec![
-                (Token::EOF, None, 0)
-            ];
+            let expected_tokens = vec![(Token::EOF, None, 0)];
             print_tokens(source);
             check_lexer_output(source, &expected_tokens);
         }
@@ -613,7 +629,7 @@ mod tests {
                 (Integer, Some("5"), 0),
                 (Whitespace, Some(" "), 0),
                 (Integer, Some("987654321"), 0),
-                (Token::EOF, None, 0)
+                (Token::EOF, None, 0),
             ];
             check_lexer_output(source, &expected);
         }
@@ -627,7 +643,7 @@ mod tests {
                 (Float, Some("0.618"), 0),
                 (Whitespace, Some(" "), 0),
                 (Float, Some("123.456"), 0),
-                (Token::EOF, None, 0)
+                (Token::EOF, None, 0),
             ];
             print_tokens(source);
             check_lexer_output(source, &expected);
@@ -644,7 +660,7 @@ mod tests {
                 (Integer, Some("100"), 0),
                 (Whitespace, Some(" "), 0),
                 (Float, Some("2.718"), 0),
-                (Token::EOF, None, 0)
+                (Token::EOF, None, 0),
             ];
             check_lexer_output(source, &expected);
         }
@@ -658,7 +674,7 @@ mod tests {
                 (Float, Some("999.999"), 0),
                 (Whitespace, Some(" "), 0),
                 (Error, Some("."), 0), // 单独的点号报错
-                (Token::EOF, None, 0)
+                (Token::EOF, None, 0),
             ];
             check_lexer_output(source, &expected);
         }
@@ -667,16 +683,55 @@ mod tests {
         fn test_comment() {
             let source = "// comment";
             print_tokens(source);
-            let expected = vec![
-                (Comment, Some("// comment"), 0),
-                (EOF, None, 0)
-            ];
+            let expected = vec![(Comment, Some("// comment"), 0), (EOF, None, 0)];
             check_lexer_output(source, &expected);
+        }
+
+        #[test]
+        fn test_string() {
+            let source = r#"
+var a = 123.2
+var b = a
+var str = "hello world" // 这是一个字符串
+"#;
+            print_tokens(source);
         }
 
         #[test]
         fn test_single_slash() {
             let source = "\n// asd\n 123.2 asd123 var if 1 + 1";
+            print_tokens(source);
+        }
+
+        #[test]
+        fn test_var_declare() {
+            let source = r#"
+   var a = 123
+"#;
+            print_tokens(source);
+        }
+
+        #[test]
+        fn test_function_call() {
+            let source = r#"
+   plot()
+"#;
+            print_tokens(source);
+        }
+
+        #[test]
+        fn test_script_1() {
+            let source = r#"
+//@version=5
+strategy("MA Cross", overlay=true)
+shortMa = ta.sma(close, 10)
+longMa = ta.sma(close, 30)
+if ta.crossover(shortMa, longMa)
+    strategy.entry("Long", strategy.long, 100)
+if ta.crossunder(shortMa, longMa)
+    strategy.close("Long")
+plot(shortMa, "Short MA")
+            "#;
             print_tokens(source);
         }
     }

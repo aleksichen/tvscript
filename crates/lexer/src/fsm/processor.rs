@@ -31,8 +31,7 @@ impl StateProcessor for InitialProcessor {
             '"' => {
                 // 消耗一个双引号
                 lexer.advance_line(1);
-                lexer.state = State::StringLiteral; // 转换到字符串状态
-                Token::StringStart // 明确返回开始标记
+                lexer.transition(State::StringLiteral)
             }
             // 空格
             ' ' | '\t' => {
@@ -41,9 +40,15 @@ impl StateProcessor for InitialProcessor {
             }
             // 换行处理
             '\n' | '\r' => lexer.consume_newline(),
+            // 其他符号处理
             _ => {
-                lexer.advance_line(1);
-                Token::Error
+                // 获取剩余字符, 如果没有字符则返回EOF
+                let result = match lexer.source.get(lexer.current_byte..) {
+                    Some(c) => lexer.consume_symbol(c),
+                    None => Some(Token::EOF),
+                };
+                
+                result.unwrap()
             }
         }
     }
@@ -129,6 +134,7 @@ pub struct IdentifierProcessor;
 impl StateProcessor for IdentifierProcessor {
     fn process(&self, lexer: &mut TokenLexer) -> Token {
         let mut ident = String::new();
+        // 解析后续的字符
         while let Some(c) = lexer.peek_char() {
             if c.is_alphanumeric() || c == '_' {
                 ident.push(c);
@@ -174,27 +180,51 @@ impl StateProcessor for SlashProcessor {
     }
 }
 
+pub struct InAssignProcessor;
+impl StateProcessor for InAssignProcessor {
+    fn process(&self, lexer: &mut TokenLexer) -> Token {
+        lexer.advance_line(1);
+        lexer.reset_state();
+        return Token::Assign;
+    }
+}
+
 /// ================== 运算符处理器 ==================
 pub struct OperatorProcessor;
 impl StateProcessor for OperatorProcessor {
     fn process(&self, lexer: &mut TokenLexer) -> Token {
-        let first_char = match lexer.peek_char() {
+        // 获取下一个字符
+        let next_char = match lexer.peek_char() {
             Some(c) => c,
             None => return Token::Operator,
         };
 
-        let mut operator = String::from(first_char);
+        let mut operator = String::from(next_char);
         lexer.advance_line(1);
 
+        // 如果当前字符是 = , 并且下一个字符不是= 直接transition到State::InAssign状态
+        if next_char == '=' {
+            if let Some(next_c) = lexer.peek_char() {
+                if next_c != '=' {
+                    // 回退一个字符, 并且跳转assign状态
+                    lexer.rollback_line();
+                    return lexer.transition(State::InAssign);
+                }
+            }
+        }
         // 检查可能的多字符运算符
         if let Some(next_c) = lexer.source[lexer.current_byte..].chars().next() {
-            let combined = match (first_char, next_c) {
-                ('=', '=') => "==",
+            let combined = match (next_char, next_c) {
+                ('+', '=') => "+=",
+                ('-', '=') => "-=",
+                ('*', '=') => "*=",
+                ('/', '=') => "/=",
+                ('%', '=') => "%=",
+
                 ('!', '=') => "!=",
                 ('>', '=') => ">=",
                 ('<', '=') => "<=",
                 ('+', '+') => "++",
-                ('-', '-') => "--",
                 _ => "",
             };
 
@@ -243,7 +273,7 @@ impl StateProcessor for StringProcessor {
                 Some('"') if !escape => {
                     lexer.advance_line(1); // 消耗结束引号
                     lexer.reset_state();
-                    return Token::StringEnd;
+                    return Token::StringLiteral;
                 }
 
                 Some('\\') => {

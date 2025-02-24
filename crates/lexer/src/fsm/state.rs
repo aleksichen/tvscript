@@ -5,6 +5,7 @@ pub enum State {
     InFloat,
     InIdentifier,
     InSlash,
+    InAssign,
     InOperator,
     InComment,
     StringLiteral,

@@ -9,3 +9,7 @@ version = "0.1.0"
 [[package]]
 name = "mise"
 version = "0.1.0"
+
+[[package]]
+name = "tvscript"
+version = "0.1.0"

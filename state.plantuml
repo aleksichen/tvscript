@@ -19,7 +19,7 @@ state InIdentifier
 state InSlash
 state InOperator
 state InPossibleOp
-state InCommentSingle
+state InComment
 
 '=== 初始状态转换 ===
 [*] --> Initial
@@ -51,13 +51,12 @@ InIdentifier --> InIdentifier: 字母、数字、下划线
 InIdentifier --> Initial: 非标识符字符 (回退生成 Identifier Token)
 
 ' 4. 斜杠处理（注释或运算符）
-InSlash --> InCommentSingle: 第二个 /
+InSlash --> InComment: 第二个 /
 InSlash --> InOperator: 非 / 或 * (回退生成 / Token)
-InSlash --> InCommentMulti: * （多行注释，需补充逻辑）
 
 ' 5. 单行注释处理
-InCommentSingle --> InCommentSingle: 非换行符
-InCommentSingle --> Initial: 换行符 (生成 Comment Token)
+InComment --> InComment: 非换行符
+InComment --> Initial: 换行符 (生成 Comment Token)
 
 ' 6. 运算符处理
 InOperator --> InPossibleOp: 下一个字符可组合（如 = 后跟 =）
