@@ -21,21 +21,39 @@ pub enum Token {
     Whitespace,
     NewLine,
     Comment,
-    Assign,
 
     Keyword,    // 关键字: var, float, if等
     Identifier, // 标识符
     Operator,   // 运算符
 
-    StringStart,   // 字符串开始
-    StringEnd,     // 字符串结束
-    StringLiteral, // 字符串内容
+    StringLiteral, // 字符串
 
     Integer, // 整数
     Float,   // 浮点数
 
+    // operators
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+
+    Assign, // =
+    AddAssign, // +=
+    SubtractAssign, // -=
+    MultiplyAssign, // *=
+    DivideAssign,  // /=
+    RemainderAssign, // %=
+
+    Equal, // ==
+    NotEqual,  // !=
+    Greater, // >
+    GreaterOrEqual, // >=
+    Less, // <
+    LessOrEqual, // <=
+
     // 符号
-    Colon,
+    Colon, 
     Comma,
     Dot,
     Function,
@@ -66,7 +84,7 @@ pub struct TokenLexer<'a> {
     // 当前字节位置
     pub current_byte: usize,
     // 当前Token的起始字节位置
-    token_start_byte: usize,
+    pub token_start_byte: usize,
     previous_byte: usize,
     // 存储中间值
     pub partial_number: Option<String>,
@@ -685,6 +703,27 @@ mod tests {
             print_tokens(source);
             let expected = vec![(Comment, Some("// comment"), 0), (EOF, None, 0)];
             check_lexer_output(source, &expected);
+        }
+
+        #[test]
+        fn test_combine_slash() {
+            let source = "/ /= // test";
+            print_tokens(source);
+            let expected = vec![
+                (Operator, Some("/"), 0),
+                (Whitespace, Some(" "), 0),
+                (DivideAssign, Some("/="), 0),
+                (Whitespace, Some(" "), 0),
+                (Comment, Some("// test"), 0),
+                (Token::EOF, None, 0),
+            ];
+            check_lexer_output(source, &expected);
+        }
+
+        #[test]
+        fn test_operator() {
+            let source = ": == != >= <= > < := = += -= *= /= %=";
+            print_tokens(source);
         }
 
         #[test]

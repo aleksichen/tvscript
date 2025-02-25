@@ -47,7 +47,7 @@ impl StateProcessor for InitialProcessor {
                     Some(c) => lexer.consume_symbol(c),
                     None => Some(Token::EOF),
                 };
-                
+
                 result.unwrap()
             }
         }
@@ -170,7 +170,11 @@ impl StateProcessor for SlashProcessor {
                 lexer.advance_line(1);
                 lexer.transition(State::InComment)
             }
-
+            // 遇到 -> 普通除法运算符
+            '=' => {
+                lexer.rollback_line();
+                lexer.transition(State::InOperator)
+            }
             // 其他情况 -> 普通除法运算符
             _ => {
                 lexer.reset_state();
@@ -193,6 +197,8 @@ impl StateProcessor for InAssignProcessor {
 pub struct OperatorProcessor;
 impl StateProcessor for OperatorProcessor {
     fn process(&self, lexer: &mut TokenLexer) -> Token {
+        use Token::*;
+
         // 获取下一个字符
         let next_char = match lexer.peek_char() {
             Some(c) => c,
@@ -220,6 +226,7 @@ impl StateProcessor for OperatorProcessor {
                 ('*', '=') => "*=",
                 ('/', '=') => "/=",
                 ('%', '=') => "%=",
+                ('=', '=') => "==",
 
                 ('!', '=') => "!=",
                 ('>', '=') => ">=",
@@ -235,7 +242,39 @@ impl StateProcessor for OperatorProcessor {
         }
 
         lexer.reset_state();
-        Token::Operator
+
+        macro_rules! map_symbol {
+            ($token_str:expr, $token:ident) => {{
+                let token_range = &lexer.source[lexer.token_start_byte..lexer.current_byte];
+                if token_range.starts_with($token_str) {
+                    return $token;
+                }
+            }};
+        }
+
+        map_symbol!("==", Equal);
+        map_symbol!("!=", NotEqual);
+        map_symbol!(">=", GreaterOrEqual);
+        map_symbol!("<=", LessOrEqual);
+        map_symbol!(">", Greater);
+        map_symbol!("<", Less);
+        map_symbol!(":", Colon);
+
+
+        map_symbol!("=", Assign);
+        map_symbol!("+=", AddAssign);
+        map_symbol!("-=", SubtractAssign);
+        map_symbol!("*=", MultiplyAssign);
+        map_symbol!("/=", DivideAssign);
+        map_symbol!("%=", RemainderAssign);
+
+        map_symbol!("+", Add);
+        map_symbol!("-", Subtract);
+        map_symbol!("*", Multiply);
+        map_symbol!("/", Divide);
+        map_symbol!("%", Remainder);
+
+        Token::Error
     }
 }
 
