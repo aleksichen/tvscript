@@ -4,4 +4,11 @@ version = "0.1.0"
 authors.workspace = true
 edition.workspace = true
 
+[features]
+default = ["rc"]
+rc = []
+
 [dependencies]
+lexer = { path = "../lexer" }
+thiserror = { workspace = true }
+smallvec = { workspace = true }

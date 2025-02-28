@@ -5,6 +5,19 @@ Program = { Statement };
 Statement = Declaration | Expression;
 
 (* 声明可以是变量声明或者函数声明 *)
-Declaration = VariableDecl | FunctionDecl;
+Declaration = VariableDecl;
 
 (* 变量声明 *)
+VariableDecl = "var" Identifier "=" Expression ;
+
+(* 表达式层级 *)
+Expression = TernaryExpr 
+           | AdditiveExpr ;
+
+(* 词法单元 *)
+Identifier = Letter (Letter | Digit | "_")* ;
+Number = Digit+ [ "." Digit+ ] ;
+String = "\"" (Escape | .)* "\"" ;
+Digit = "0"-"9" ;
+Letter = "a"-"z" | "A"-"Z" ;
+Escape = "\\" ( "\"" | "\\" | "n" | "t" ) ;

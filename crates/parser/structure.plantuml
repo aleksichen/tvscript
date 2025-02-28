@@ -1,0 +1,100 @@
+@startuml
+!pragma layout smetana
+
+class TvLexer {
+    ' 内部核心词法分析器
+    - lexer: TokenLexer
+    ' 预先缓存的下一个token
+    - token_queue: VecDeque<LexedToken>
+    + new(source: &str) -> Self
+    ' 原始全量字符
+    + source() -> &str
+    ' 根据LexedToken获取原始字符串
+    + token_source(token: LexedToken) -> &str
+    ' 查看下一个token
+    + peek(n: usize) -> Option<&LexedToken>
+    ' consume n 个字符并返回token
+    + next_token() -> Option<LexedToken>
+}
+
+class Token {
+    
+}
+
+class LexedToken {
+    ' token枚举
+    - token: Token
+    ' 原始字节串范围
+    - source_bytes: Range<usize>
+    ' 位置标记信息
+    - span: Span
+}
+
+class PrattParser {
+    - prefix_parselets: HashMap<TokenType, PrefixParselet>
+    - infix_parselets: HashMap<TokenType, InfixParselet>
+    + parse_expr(lexer: &mut TvLexer, min_prec: u8) -> Expr
+}
+
+class Parser {
+    ' 词法分析器
+    - lexer: TvLexer
+    ' Pratt Parser用于parse_expression的内部实现
+    - pratt: PrattParser
+    ' 解析主入口
+    + parse_program() -> Vec<Stmt>
+    ' 解析语句
+    - parse_stmt() -> Stmt
+    ' 解析表达式
+    - parse_expression() -> Expr
+    ' 调用tvLexer.next消费并返回下一个token
+    - consume_token() -> LexedToken
+}
+
+class TokenLexer {
+    ' 原始字符串
+    - source: String
+    ' 位置索引
+    - pos: usize
+    ' 是否已经解析完
+    - eof_generated: bool
+    ' 初始化
+    + new(source: &str) -> Self
+    ' 当前token的字符范围
+    + current_token_bytes() -> Range<usize>
+    ' consume n 个字符并返回token
+    + get_next_token() -> Token
+}
+
+TvLexer --> TokenLexer : 组合
+TvLexer --> LexedToken : 生成
+TvLexer --> VecDeque : 缓冲队列
+TokenLexer --> Token : 生成
+Parser --> TvLexer : 持有
+Parser --> PrattParser : 委托表达式解析
+PrattParser --> TvLexer : 交互消费Token
+
+note top of TvLexer
+ **创新设计特征**
+ 1. 双缓冲机制：TokenLexer + VecDeque
+ 2. 支持任意位置peek(n)
+ 3. 零拷贝token原始数据访问
+end note
+
+note right of PrattParser
+ **表达式解析优化**
+ 利用peek(n)特性实现：
+ - 更精准的优先级判断
+ - 长运算符（如>>>）的快速识别
+end note
+
+note left of Parser
+ **双模式协作流程**
+ 1. 递归下降解析时：
+    - 使用peek(0)判断语句类型
+    - 直接消费Token
+ 2. Pratt解析时：
+    - 通过peek(1)预读辅助决策
+    - 动态优先级爬升
+end note
+@enduml

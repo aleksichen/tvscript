@@ -3,9 +3,8 @@ use std::{collections::VecDeque, ops::Range};
 use crate::{
     fsm::{
         processor::{
-            CommentProcessor, ErrorProcessor, FloatProcessor, IdentifierProcessor,
-            InAssignProcessor, InitialProcessor, IntegerProcessor, OperatorProcessor,
-            SlashProcessor, StringProcessor,
+            CommentProcessor, FloatProcessor, IdentifierProcessor, InAssignProcessor,
+            InitialProcessor, IntegerProcessor, OperatorProcessor, SlashProcessor, StringProcessor,
         },
         state::FloatPhase,
         *,
@@ -14,46 +13,39 @@ use crate::{
 };
 
 /// the tokens thats can emerge from the lexer
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[allow(missing_docs)]
 pub enum Token {
     Error,
     Whitespace,
     NewLine,
     Comment,
-
-    Keyword,    // 关键字: var, float, if等
-    Identifier, // 标识符
-    Operator,   // 运算符
-
+    Keyword,       // 关键字: var, float, if等
+    Identifier,    // 标识符
+    Operator,      // 运算符
     StringLiteral, // 字符串
-
-    Integer, // 整数
-    Float,   // 浮点数
-
+    Integer,       // 整数
+    Float,         // 浮点数
     // operators
     Add,
     Subtract,
     Multiply,
     Divide,
     Remainder,
-
-    Assign, // =
-    AddAssign, // +=
-    SubtractAssign, // -=
-    MultiplyAssign, // *=
-    DivideAssign,  // /=
+    Assign,          // =
+    AddAssign,       // +=
+    SubtractAssign,  // -=
+    MultiplyAssign,  // *=
+    DivideAssign,    // /=
     RemainderAssign, // %=
-
-    Equal, // ==
-    NotEqual,  // !=
-    Greater, // >
-    GreaterOrEqual, // >=
-    Less, // <
-    LessOrEqual, // <=
-
+    Equal,           // ==
+    NotEqual,        // !=
+    Greater,         // >
+    GreaterOrEqual,  // >=
+    Less,            // <
+    LessOrEqual,     // <=
     // 符号
-    Colon, 
+    Colon,
     Comma,
     Dot,
     Function,
@@ -65,6 +57,11 @@ pub enum Token {
     CurlyClose,
     QuestionMark,
 
+    // keywords
+    Var,
+    If,
+    Else,
+    ElseIf,
     EOF, // 文件结束符
 }
 
@@ -97,7 +94,7 @@ pub struct TokenLexer<'a> {
 }
 
 impl<'a> TokenLexer<'a> {
-    fn new(source: &'a str) -> Self {
+    pub fn new(source: &'a str) -> Self {
         Self {
             eof_generated: false,
             state: State::Initial,
@@ -366,14 +363,11 @@ impl<'a> TokenLexer<'a> {
 
     /// 关键字判断
     pub fn keyword_or_identifier(&self, ident: &str) -> Token {
-        const KEYWORDS: [&str; 9] = [
-            "var", "float", "if", "else", "true", "false", "na", "input", "ta",
-        ];
-
-        if KEYWORDS.contains(&ident) {
-            Token::Keyword
-        } else {
-            Token::Identifier
+        match ident {
+            "var" => Token::Var,
+            "if" => Token::If,
+            "else" => Token::Else,
+            _ => Token::Identifier,
         }
     }
 }
@@ -426,7 +420,7 @@ impl Default for LexedToken {
     }
 }
 
-/// The lexer used by the Koto parser
+/// The lexer used by the pine parser
 ///
 /// Wraps a TokenLexer with unbounded lookahead, see peek_n().
 #[derive(Clone)]
@@ -447,6 +441,14 @@ impl<'a> TvLexer<'a> {
     /// Returns the input source
     pub fn source(&self) -> &'a str {
         self.lexer.source
+    }
+
+    /// 根据已经解析好的token信息获取该token的原始输入
+    pub fn token_source(&self, token: LexedToken) -> &'a str {
+        let start = token.source_bytes.start;
+        let end = token.source_bytes.end;
+
+        &self.lexer.source[start..end]
     }
 
     /// Peeks the nth token that will appear in the output stream

@@ -7,6 +7,9 @@ authors = ["aleksichen <aleksichen@gmail.com>"]
 edition = "2021"
 
 [workspace.dependencies]
+anyhow = "1.0.75"
+thiserror = "1.0.44"
+smallvec = { version = "1.11.1", features = ["const_generics", "union"] }
 
 # Enable extra optimizations for release builds
 [profile.release]
