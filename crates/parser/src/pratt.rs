@@ -55,15 +55,19 @@ enum Expr {
         /// 右操作数表达式
         right: Box<Expr>,
     },
-}
-
-/// Pratt Parser 结构体
-pub struct PrattParser<'a> {
-    /// 前缀解析函数映射表，key 是 Token 类型，value 是实现了 PrefixParselet trait 的解析器
-    prefix_parselets: HashMap<Token, Rc<dyn PrefixParselet>>,
-    /// 中缀解析函数映射表，key 是 Token 类型，value 是实现了 InfixParselet trait 的解析器
-    infix_parselets: HashMap<Token, Rc<dyn InfixParselet>>,
-    parser: &'a mut dyn ParserApi,
+    /// 函数调用表达式
+    Call {
+        /// 被调用的函数表达式（可以是标识符或复杂表达式）
+        func: Box<Expr>,
+        /// 参数列表
+        args: Vec<Expr>,
+    },
+    Identifier(String),
+    /// 成员访问表达式 (如 obj.property)
+    MemberAccess {
+        object: Box<Expr>, // 左侧对象表达式
+        member: String,    // 成员名称
+    },
 }
 
 /// 前缀解析子句 Trait，定义前缀运算符的解析行为
@@ -135,6 +139,87 @@ impl InfixParselet for BinaryOpParselet {
     fn precedence(&self) -> PrecedenceLevel {
         self.precedence
     }
+}
+
+struct GroupParselet;
+impl PrefixParselet for GroupParselet {
+    fn parse(&self, parser: &mut PrattParser, _: LexedToken) -> Expr {
+        let expr = parser.parse_expression(PrecedenceLevel::Lowest);
+        assert_eq!(
+            parser.parser.consume_token().unwrap().token,
+            Token::RoundClose
+        );
+        expr
+    }
+}
+
+struct CallParselet {
+    precedence: PrecedenceLevel,
+}
+impl InfixParselet for CallParselet {
+    fn parse(&self, parser: &mut PrattParser, left: Expr, _: LexedToken) -> Expr {
+        let mut args = vec![];
+        while parser.parser.peek(0).map(|t| t.token) != Some(Token::RoundClose) {
+            args.push(parser.parse_expression(PrecedenceLevel::Lowest));
+            if parser.parser.peek(0).map(|t| t.token) == Some(Token::Comma) {
+                parser.parser.consume_token();
+            }
+        }
+        parser.parser.consume_token(); // 消耗右括号
+        Expr::Call {
+            func: Box::new(left),
+            args,
+        }
+    }
+
+    fn precedence(&self) -> PrecedenceLevel {
+        self.precedence
+    }
+}
+
+struct IdentifierParselet;
+
+impl PrefixParselet for IdentifierParselet {
+    fn parse(&self, _: &mut PrattParser, token: LexedToken) -> Expr {
+        if let Token::Identifier = &token.token {
+            Expr::Identifier("id".to_string())
+        } else {
+            panic!("Unexpected token for identifier")
+        }
+    }
+}
+
+struct DotParselet;
+
+impl InfixParselet for DotParselet {
+    fn parse(&self, parser: &mut PrattParser, left: Expr, token: LexedToken) -> Expr {
+        let member_token = parser
+            .parser
+            .consume_token()
+            .expect("Expected identifier after '.'");
+        let member = if let Token::Identifier = member_token.token {
+            "id".to_string()
+        } else {
+            panic!("Expected identifier after '.'");
+        };
+        Expr::MemberAccess {
+            object: Box::new(left),
+            member,
+        }
+    }
+
+    fn precedence(&self) -> PrecedenceLevel {
+        PrecedenceLevel::Call // 与函数调用同级
+    }
+}
+
+/// Pratt Parser 结构体
+pub struct PrattParser<'a> {
+    /// 前缀解析函数映射表，key 是 Token 类型，value 是实现了 PrefixParselet trait 的解析器
+    prefix_parselets: HashMap<Token, Rc<dyn PrefixParselet>>,
+    /// 中缀解析函数映射表，key 是 Token 类型，value 是实现了 InfixParselet trait 的解析器
+    infix_parselets: HashMap<Token, Rc<dyn InfixParselet>>,
+    parser: &'a mut dyn ParserApi,
 }
 
 impl<'a> PrattParser<'a> {
@@ -244,22 +329,45 @@ impl PrattParserBuilder {
 pub fn create_pratt_parser(parser: &mut dyn ParserApi) -> PrattParser {
     PrattParserBuilder::new()
         .with_prefix(Token::Integer, NumberParselet)
-        .with_infix(Token::Add, BinaryOpParselet {
-            precedence: PrecedenceLevel::Sum,
-            is_right_assoc: false,
-        })
-        .with_infix(Token::Subtract, BinaryOpParselet {
-            precedence: PrecedenceLevel::Sum,
-            is_right_assoc: false,
-        })
-        .with_infix(Token::Multiply, BinaryOpParselet {
-            precedence: PrecedenceLevel::Product,
-            is_right_assoc: false,
-        })
-        .with_infix(Token::Divide, BinaryOpParselet {
-            precedence: PrecedenceLevel::Product,
-            is_right_assoc: false,
-        })
+        .with_prefix(Token::RoundOpen, GroupParselet)
+        .with_prefix(Token::Identifier, IdentifierParselet)
+        .with_infix(
+            Token::Add,
+            BinaryOpParselet {
+                precedence: PrecedenceLevel::Sum,
+                is_right_assoc: false,
+            },
+        )
+        .with_infix(
+            Token::Subtract,
+            BinaryOpParselet {
+                precedence: PrecedenceLevel::Sum,
+                is_right_assoc: false,
+            },
+        )
+        .with_infix(
+            Token::Multiply,
+            BinaryOpParselet {
+                precedence: PrecedenceLevel::Product,
+                is_right_assoc: false,
+            },
+        )
+        .with_infix(
+            Token::Divide,
+            BinaryOpParselet {
+                precedence: PrecedenceLevel::Product,
+                is_right_assoc: false,
+            },
+        )
+        // ( => 中缀表达式启用函数识别
+        .with_infix(
+            Token::RoundOpen,
+            CallParselet {
+                precedence: PrecedenceLevel::Call,
+            },
+        )
+        // . 点运算符解析
+        .with_infix(Token::Dot, DotParselet)
         .build(parser)
 }
 
@@ -362,6 +470,14 @@ mod tests {
 
     fn mul_token() -> LexedToken {
         create_token(Token::Multiply, 0, 4, 0, 5)
+    }
+
+    fn lparen_token() -> LexedToken {
+        create_token(Token::RoundOpen, 0, 0, 0, 1)
+    }
+
+    fn rparen_token() -> LexedToken {
+        create_token(Token::RoundClose, 0, 0, 0, 1)
     }
 
     #[test]
@@ -509,5 +625,82 @@ mod tests {
             }
         );
     }
-    
+
+    #[test]
+    fn test_parentheses() {
+        let tokens = vec![
+            lparen_token(),
+            int_token(),
+            add_token(),
+            int_token(),
+            rparen_token(),
+            mul_token(),
+            int_token(),
+        ];
+        let mut parser = MockParser::new(tokens);
+        let mut pratt = create_pratt_parser(&mut parser);
+
+        assert_eq!(
+            pratt.parse_expression(PrecedenceLevel::Lowest),
+            Expr::BinaryOp {
+                op: Token::Multiply,
+                left: Box::new(Expr::BinaryOp {
+                    op: Token::Add,
+                    left: Box::new(Expr::Integer(1)),
+                    right: Box::new(Expr::Integer(1)),
+                }),
+                right: Box::new(Expr::Integer(1)),
+            }
+        );
+    }
+
+    #[test]
+    fn test_function_call() {
+        let tokens = vec![
+            create_token(Token::Identifier, 0, 0, 0, 3), // "sum"
+            lparen_token(),
+            int_token(),
+            create_token(Token::Comma, 0, 4, 0, 5),
+            int_token(),
+            rparen_token(),
+        ];
+        let mut parser = MockParser::new(tokens);
+        let mut pratt = create_pratt_parser(&mut parser);
+
+        assert_eq!(
+            pratt.parse_expression(PrecedenceLevel::Lowest),
+            Expr::Call {
+                func: Box::new(Expr::Identifier("id".to_string())),
+                args: vec![Expr::Integer(1), Expr::Integer(1)],
+            }
+        );
+    }
+
+    #[test]
+    fn test_member_function_call() {
+        let tokens = vec![
+            create_token(Token::Identifier, 0, 0, 0, 2),
+            create_token(Token::Dot, 0, 3, 0, 4),
+            create_token(Token::Identifier, 0, 5, 0, 14),
+            lparen_token(),
+            create_token(Token::Identifier, 0, 15, 0, 20),
+            create_token(Token::Comma, 0, 21, 0, 22),
+            int_token(),
+            rparen_token(),
+        ];
+
+        let mut parser = MockParser::new(tokens);
+        let mut pratt = create_pratt_parser(&mut parser);
+
+        assert_eq!(
+            pratt.parse_expression(PrecedenceLevel::Lowest),
+            Expr::Call {
+                func: Box::new(Expr::MemberAccess {
+                    object: Box::new(Expr::Identifier("id".to_string())),
+                    member: "id".to_string(),
+                }),
+                args: vec![Expr::Identifier("id".to_string()), Expr::Integer(1),],
+            }
+        );
+    }
 }
