@@ -1,5 +1,0 @@
-mod parser {
-  use parser::*;
-
-  
-}

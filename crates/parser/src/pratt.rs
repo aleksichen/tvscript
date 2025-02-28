@@ -155,8 +155,12 @@ impl<'a> PrattParser<'a> {
         // 先解析前缀表达式
         let mut left = self.parse_prefix();
 
-        // 循环处理中缀运算符，直到遇到优先级低于 min_precedence 的运算符
-        while min_precedence < self.current_precedence() {
+        // 确保只有在存在下一个token且优先级足够高时才继续循环
+        while let Some(_) = self.parser.peek(0) {
+            let current_prec = self.current_precedence();
+            if current_prec <= min_precedence {
+                break;
+            }
             let op = self.parser.consume_token(); // 消耗当前中缀运算符 Token
             left = self.parse_infix(left, op.expect("No such token")); // 解析中缀表达式，将左操作数和运算符传递给中缀解析子句
         }
@@ -166,18 +170,21 @@ impl<'a> PrattParser<'a> {
 
     /// 解析前缀表达式
     fn parse_prefix(&mut self) -> Expr {
-        let token = self.parser.consume_token()
+        let token = self
+            .parser
+            .consume_token()
             .expect("Unexpected EOF while parsing prefix expression");
-    
+
         let token_type = &token.token;
-        let parselet = self.prefix_parselets
+        let parselet = self
+            .prefix_parselets
             .get(token_type)
             .unwrap_or_else(|| panic!("No prefix parselet for: {:?}", token_type))
             .clone();
-    
+
         parselet.parse(self, token)
     }
-    
+
     /// 解析中缀表达式
     fn parse_infix(&mut self, left: Expr, token: LexedToken) -> Expr {
         // 从中缀解析函数映射表中获取对应 Token 的解析子句，如果不存在则 panic
@@ -236,23 +243,271 @@ impl PrattParserBuilder {
 
 pub fn create_pratt_parser(parser: &mut dyn ParserApi) -> PrattParser {
     PrattParserBuilder::new()
-        // 注册数字前缀解析
         .with_prefix(Token::Integer, NumberParselet)
-        // 注册加法中缀解析（左结合，优先级10）
-        .with_infix(
-            Token::Add,
-            BinaryOpParselet {
-                precedence: PrecedenceLevel::Sum,
-                is_right_assoc: false,
-            },
-        )
-        // 注册乘法中缀解析（左结合，优先级20）
-        .with_infix(
-            Token::Multiply,
-            BinaryOpParselet {
-                precedence: PrecedenceLevel::Product,
-                is_right_assoc: false,
-            },
-        )
+        .with_infix(Token::Add, BinaryOpParselet {
+            precedence: PrecedenceLevel::Sum,
+            is_right_assoc: false,
+        })
+        .with_infix(Token::Subtract, BinaryOpParselet {
+            precedence: PrecedenceLevel::Sum,
+            is_right_assoc: false,
+        })
+        .with_infix(Token::Multiply, BinaryOpParselet {
+            precedence: PrecedenceLevel::Product,
+            is_right_assoc: false,
+        })
+        .with_infix(Token::Divide, BinaryOpParselet {
+            precedence: PrecedenceLevel::Product,
+            is_right_assoc: false,
+        })
         .build(parser)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lexer::{
+        lexer::{LexedToken, Token, TvLexer},
+        span::{Position, Span},
+    };
+    use std::cell::RefCell;
+
+    /// 模拟 Parser 实现
+    struct MockParser {
+        tokens: RefCell<Vec<LexedToken>>,
+        position: RefCell<usize>,
+    }
+
+    impl MockParser {
+        fn new(tokens: Vec<LexedToken>) -> Self {
+            Self {
+                tokens: RefCell::new(tokens),
+                position: RefCell::new(0),
+            }
+        }
+
+        /// 创建带位置信息的 Token
+        fn with_positions(tokens: &[(Token, (u32, u32), (u32, u32))]) -> Self {
+            let tokens = tokens
+                .iter()
+                .map(|(t, (sl, sc), (el, ec))| LexedToken {
+                    token: t.clone(),
+                    span: Span {
+                        start: Position {
+                            line: *sl,
+                            column: *sc,
+                        },
+                        end: Position {
+                            line: *el,
+                            column: *ec,
+                        },
+                    },
+                    source_bytes: 0..1, // 简化处理
+                })
+                .collect();
+            Self::new(tokens)
+        }
+    }
+
+    impl ParserApi for MockParser {
+        fn peek(&mut self, n: usize) -> Option<LexedToken> {
+            let pos = *self.position.borrow();
+            self.tokens.borrow().get(pos + n).cloned()
+        }
+
+        fn consume_token(&mut self) -> Option<LexedToken> {
+            let mut pos = self.position.borrow_mut();
+            let token = self.tokens.borrow().get(*pos).cloned();
+            *pos += 1;
+            token
+        }
+
+        fn token_source(&self, _: &LexedToken) -> &str {
+            "" // 测试中暂不需要源字符串
+        }
+    }
+
+    // 测试工具函数：创建标准 LexedToken
+    fn create_token(
+        token: Token,
+        start_line: u32,
+        start_col: u32,
+        end_line: u32,
+        end_col: u32,
+    ) -> LexedToken {
+        LexedToken {
+            token,
+            span: Span {
+                start: Position {
+                    line: start_line,
+                    column: start_col,
+                },
+                end: Position {
+                    line: end_line,
+                    column: end_col,
+                },
+            },
+            source_bytes: 0..1,
+        }
+    }
+
+    // 测试工具函数：创建 LexedToken
+    fn int_token() -> LexedToken {
+        create_token(Token::Integer, 0, 0, 0, 1)
+    }
+
+    fn add_token() -> LexedToken {
+        create_token(Token::Add, 0, 2, 0, 3)
+    }
+
+    fn mul_token() -> LexedToken {
+        create_token(Token::Multiply, 0, 4, 0, 5)
+    }
+
+    #[test]
+    fn test_position_tracking() {
+        let mut parser = MockParser::with_positions(&[
+            (Token::Integer, (0, 0), (0, 1)),
+            (Token::Add, (0, 2), (0, 3)),
+            (Token::Integer, (0, 4), (0, 5)),
+        ]);
+
+        let token1 = parser.consume_token().unwrap();
+        assert_eq!(token1.span.start.column, 0);
+        assert_eq!(token1.span.end.column, 1);
+
+        let token2 = parser.consume_token().unwrap();
+        assert_eq!(token2.span.start.column, 2);
+    }
+
+    #[test]
+    fn test_single_integer() {
+        let mut parser = MockParser::new(vec![int_token()]);
+        let mut pratt = create_pratt_parser(&mut parser);
+
+        let expr = pratt.parse_expression(PrecedenceLevel::Lowest);
+        assert_eq!(expr, Expr::Integer(1));
+    }
+
+    #[test]
+    fn test_addition_priority() {
+        // 1 + 2 * 3
+        let tokens = vec![
+            int_token(),
+            add_token(),
+            int_token(),
+            mul_token(),
+            int_token(),
+        ];
+        let mut parser = MockParser::new(tokens);
+        let mut pratt = create_pratt_parser(&mut parser);
+
+        let expr = pratt.parse_expression(PrecedenceLevel::Lowest);
+        assert_eq!(
+            expr,
+            Expr::BinaryOp {
+                op: Token::Add,
+                left: Box::new(Expr::Integer(1)),
+                right: Box::new(Expr::BinaryOp {
+                    op: Token::Multiply,
+                    left: Box::new(Expr::Integer(1)),
+                    right: Box::new(Expr::Integer(1)),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn test_right_associative() {
+        // 修改乘法为右结合
+        let builder = PrattParserBuilder::new()
+            .with_prefix(Token::Integer, NumberParselet)
+            .with_infix(
+                Token::Multiply,
+                BinaryOpParselet {
+                    precedence: PrecedenceLevel::Product,
+                    is_right_assoc: true,
+                },
+            );
+
+        // 1 * 2 * 3 应该解析为 1 * (2 * 3)
+        let tokens = vec![
+            int_token(),
+            mul_token(),
+            int_token(),
+            mul_token(),
+            int_token(),
+        ];
+        let mut parser = MockParser::new(tokens);
+        let mut pratt = builder.build(&mut parser);
+
+        let expr = pratt.parse_expression(PrecedenceLevel::Lowest);
+        assert_eq!(
+            expr,
+            Expr::BinaryOp {
+                op: Token::Multiply,
+                left: Box::new(Expr::Integer(1)),
+                right: Box::new(Expr::BinaryOp {
+                    op: Token::Multiply,
+                    left: Box::new(Expr::Integer(1)),
+                    right: Box::new(Expr::Integer(1)),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn test_current_precedence() {
+        let tokens = vec![mul_token()];
+        let mut parser = MockParser::new(tokens);
+        let mut pratt = create_pratt_parser(&mut parser);
+
+        // 检查乘法优先级
+        assert_eq!(pratt.current_precedence(), PrecedenceLevel::Product);
+    }
+
+    #[test]
+    #[should_panic(expected = "No prefix parselet for: Add")]
+    fn test_invalid_prefix() {
+        let mut parser = MockParser::new(vec![add_token()]);
+        let mut pratt = create_pratt_parser(&mut parser);
+        pratt.parse_expression(PrecedenceLevel::Lowest);
+    }
+
+    #[test]
+    fn test_mixed_operators() {
+        TvLexer::new("1 + 2 * 3 - 4");
+        // 1 + 2 * 3 - 4
+        let tokens = vec![
+            int_token(),
+            add_token(),
+            int_token(),
+            mul_token(),
+            int_token(),
+            create_token(Token::Subtract, 0, 6, 0, 7), // 添加减法token
+            int_token(),
+        ];
+        let mut parser = MockParser::new(tokens);
+        let mut pratt = create_pratt_parser(&mut parser);
+
+        let expr = pratt.parse_expression(PrecedenceLevel::Lowest);
+        print!("{:?}", expr);
+        assert_eq!(
+            expr,
+            Expr::BinaryOp {
+                op: Token::Subtract,
+                left: Box::new(Expr::BinaryOp {
+                    op: Token::Add,
+                    left: Box::new(Expr::Integer(1)),
+                    right: Box::new(Expr::BinaryOp {
+                        op: Token::Multiply,
+                        left: Box::new(Expr::Integer(1)),
+                        right: Box::new(Expr::Integer(1)),
+                    }),
+                }),
+                right: Box::new(Expr::Integer(1)),
+            }
+        );
+    }
+    
 }

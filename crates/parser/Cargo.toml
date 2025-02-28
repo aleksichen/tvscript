@@ -10,5 +10,6 @@ rc = []
 
 [dependencies]
 lexer = { path = "../lexer" }
+memory = { path = "../memory" }
 thiserror = { workspace = true }
 smallvec = { workspace = true }

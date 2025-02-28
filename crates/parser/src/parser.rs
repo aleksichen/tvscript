@@ -29,7 +29,7 @@ trait RecursiveDescent {
 
 pub trait ParserApi {
     /// 预读第n个token（不消费）
-    fn peek(&mut self, n: usize) -> Option<&LexedToken>;
+    fn peek(&mut self, n: usize) -> Option<LexedToken>;
     
     /// 消费当前token并返回
     fn consume_token(&mut self) -> Option<LexedToken>;
@@ -47,11 +47,11 @@ struct PeekInfo {
 }
 
 pub struct Parser<'source> {
-    source: &'source str,
-    ast: Ast,
-    lexer: Lexer<'source>,
-    current_token: LexedToken,
-    current_line: u32,
+    pub source: &'source str,
+    pub ast: Ast,
+    pub lexer: Lexer<'source>,
+    pub current_token: LexedToken,
+    pub current_line: u32,
 }
 
 impl<'source> Parser<'source> {
@@ -132,9 +132,9 @@ impl<'source> Parser<'source> {
 }
 
 impl<'a> ParserApi for Parser<'a> {
-    fn peek(&mut self, n: usize) -> Option<&LexedToken> {
-        // 直接委托给 TvLexer 的缓冲队列
-        self.lexer.peek(n)
+    fn peek(&mut self, n: usize) -> Option<LexedToken> {
+        // 直接委托给 TvLexer 的缓冲队列，并克隆结果
+        self.lexer.peek(n).cloned()
     }
     fn consume_token(&mut self) -> Option<LexedToken> {
         if let Some(next) = self.lexer.next() {

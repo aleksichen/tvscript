@@ -7,6 +7,10 @@ name = "lexer"
 version = "0.1.0"
 
 [[package]]
+name = "memory"
+version = "0.1.0"
+
+[[package]]
 name = "mise"
 version = "0.1.0"
 
@@ -15,6 +19,7 @@ name = "parser"
 version = "0.1.0"
 dependencies = [
  "lexer",
+ "memory",
  "smallvec",
  "thiserror",
 ]
