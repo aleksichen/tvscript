@@ -68,6 +68,19 @@ enum Expr {
         object: Box<Expr>, // 左侧对象表达式
         member: String,    // 成员名称
     },
+    // 三元表达式
+    Ternary {
+        cond_expr: Box<Expr>,
+        then_expr: Box<Expr>,
+        else_expr: Box<Expr>,
+    },
+    // 数组字面量
+    ArrayLiteral(Vec<Expr>),
+    // 数组下标访问
+    IndexAccess {
+        array: Box<Expr>,
+        index: Box<Expr>,
+    },
 }
 
 /// 前缀解析子句 Trait，定义前缀运算符的解析行为
@@ -105,6 +118,23 @@ impl PrefixParselet for NumberParselet {
         } else {
             panic!("Unexpected token") // 遇到非 Integer Token，panic
         }
+    }
+}
+
+// 数组字面量解析器
+struct ArrayParselet;
+impl PrefixParselet for ArrayParselet {
+    fn parse(&self, parser: &mut PrattParser, _: LexedToken) -> Expr {
+        let mut elements = vec![];
+
+        while parser.parser.peek(0).map(|t| t.token) != Some(Token::SquareClose) {
+            elements.push(parser.parse_expression(PrecedenceLevel::Lowest));
+            if parser.parser.peek(0).map(|t| t.token) == Some(Token::Comma) {
+                parser.parser.consume_token();
+            }
+        }
+        parser.parser.consume_token(); // 消耗 ]
+        Expr::ArrayLiteral(elements)
     }
 }
 
@@ -210,6 +240,43 @@ impl InfixParselet for DotParselet {
 
     fn precedence(&self) -> PrecedenceLevel {
         PrecedenceLevel::Call // 与函数调用同级
+    }
+}
+
+// 三元条件表达式解析器
+struct TernaryParselet;
+impl InfixParselet for TernaryParselet {
+    fn parse(&self, parser: &mut PrattParser, cond: Expr, _: LexedToken) -> Expr {
+        // 解析then语句
+        let then_expr = parser.parse_expression(PrecedenceLevel::Lowest);
+        parser.parser.consume_token(); // 跳过 :
+                                       // 解析else语句
+        let else_expr = parser.parse_expression(PrecedenceLevel::Assignment);
+        Expr::Ternary {
+            cond_expr: Box::new(cond),
+            then_expr: Box::new(then_expr),
+            else_expr: Box::new(else_expr),
+        }
+    }
+
+    fn precedence(&self) -> PrecedenceLevel {
+        PrecedenceLevel::Assignment // 优先级低于逻辑运算
+    }
+}
+
+// 下标访问解析器
+struct IndexParselet;
+impl InfixParselet for IndexParselet {
+    fn parse(&self, parser: &mut PrattParser, left: Expr, _: LexedToken) -> Expr {
+        let index = parser.parse_expression(PrecedenceLevel::Lowest);
+        parser.parser.consume_token(); // 消耗 ]
+        Expr::IndexAccess {
+            array: Box::new(left),
+            index: Box::new(index),
+        }
+    }
+    fn precedence(&self) -> PrecedenceLevel {
+        PrecedenceLevel::Call
     }
 }
 
@@ -331,6 +398,7 @@ pub fn create_pratt_parser(parser: &mut dyn ParserApi) -> PrattParser {
         .with_prefix(Token::Integer, NumberParselet)
         .with_prefix(Token::RoundOpen, GroupParselet)
         .with_prefix(Token::Identifier, IdentifierParselet)
+        .with_prefix(Token::SquareOpen, ArrayParselet)
         .with_infix(
             Token::Add,
             BinaryOpParselet {
@@ -368,6 +436,9 @@ pub fn create_pratt_parser(parser: &mut dyn ParserApi) -> PrattParser {
         )
         // . 点运算符解析
         .with_infix(Token::Dot, DotParselet)
+        // 问号运算符, 用于三元表达式
+        .with_infix(Token::QuestionMark, TernaryParselet)
+        .with_infix(Token::SquareOpen, IndexParselet)
         .build(parser)
 }
 
