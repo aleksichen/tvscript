@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod core;
 pub mod parser;
 pub mod node;
 pub mod error;

@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Pratt Parser Test Schema",
+  "type": "object",
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "version": {"type": "string"},
+        "parser_version": {"type": "string"},
+        "last_updated": {"type": "string", "format": "date"}
+      }
+    },
+    "test_suites": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "category": {"type": "string"},
+          "description": {"type": "string"},
+          "tests": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "input", "expected"],
+              "properties": {
+                "name": {"type": "string"},
+                "description": {"type": "string"},
+                "input": {"type": "string"},
+                "expected": {
+                  "oneOf": [
+                    {"$ref": "#/definitions/astExpectation"},
+                    {"$ref": "#/definitions/errorExpectation"}
+                  ]
+                },
+                "priority": {
+                  "type": "string",
+                  "enum": ["low", "medium", "high", "critical"]
+                },
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "pending": {"type": "boolean"}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "astExpectation": {
+      "type": "object",
+      "required": ["ast"],
+      "properties": {
+        "ast": {"type": "object"}
+      }
+    },
+    "errorExpectation": {
+      "type": "object",
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "type": "object",
+          "required": ["type", "message"],
+          "properties": {
+            "type": {"type": "string"},
+            "message": {"type": "string"},
+            "position": {
+              "type": "object",
+              "properties": {
+                "line": {"type": "number"},
+                "column": {"type": "number"}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

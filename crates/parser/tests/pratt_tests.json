@@ -1,0 +1,77 @@
+{
+  "$schema": "./pratt_test_schema.json",
+  "metadata": {
+    "version": "1.2.0",
+    "parser_version": ">=0.4.0",
+    "last_updated": "2024-03-20"
+  },
+  "test_suites": [
+    {
+      "category": "operator_precedence",
+      "description": "验证基础运算符优先级和结合性",
+      "tests": [
+        {
+          "name": "add_multiply_precedence",
+          "description": "乘除优先级高于加减",
+          "input": "3 + 4 * 2",
+          "expected": {
+            "ast": {
+              "type": "BinaryExpr",
+              "op": "+",
+              "left": {"type": "Literal", "value": 3},
+              "right": {
+                "type": "BinaryExpr",
+                "op": "*",
+                "left": {"type": "Literal", "value": 4},
+                "right": {"type": "Literal", "value": 2}
+              }
+            }
+          },
+          "priority": "high",
+          "tags": ["core"]
+        },
+        {
+          "name": "exponent_right_assoc",
+          "description": "指数运算符右结合性",
+          "input": "2 ^ 3 ^ 2",
+          "expected": {
+            "ast": {
+              "type": "BinaryExpr",
+              "op": "^",
+              "left": {"type": "Literal", "value": 2},
+              "right": {
+                "type": "BinaryExpr",
+                "op": "^",
+                "left": {"type": "Literal", "value": 3},
+                "right": {"type": "Literal", "value": 2}
+              }
+            }
+          },
+          "priority": "critical"
+        }
+      ]
+    },
+    {
+      "category": "error_handling",
+      "description": "语法错误场景检测",
+      "tests": [
+        {
+          "name": "consecutive_plus",
+          "description": "检测连续中缀运算符错误",
+          "input": "1 + + 2",
+          "expected": {
+            "error": {
+              "type": "SyntaxError",
+              "message": "Unexpected operator '+'",
+              "position": {
+                "line": 1,
+                "column": 4
+              }
+            }
+          },
+          "should_fail": true
+        }
+      ]
+    }
+  ]
+}

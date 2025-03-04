@@ -65,13 +65,13 @@ pub enum Token {
     EOF, // 文件结束符
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct StateSnapshot {
     byte_pos: usize,
     span: Span,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TokenLexer<'a> {
     eof_generated: bool,
     // 状态
@@ -423,7 +423,7 @@ impl Default for LexedToken {
 /// The lexer used by the pine parser
 ///
 /// Wraps a TokenLexer with unbounded lookahead, see peek_n().
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TvLexer<'a> {
     lexer: TokenLexer<'a>,
     token_queue: VecDeque<LexedToken>,

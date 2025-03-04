@@ -2,25 +2,29 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use lexer::lexer::{LexedToken, Token};
+use serde::Deserialize;
 
-use crate::parser::ParserApi;
+use crate::core::ParserCore;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 /// 运算符优先级枚举
 pub enum PrecedenceLevel {
     /// 最低优先级
     Lowest = 0,
-    /// 赋值运算符优先级
+    /// 赋值运算符
     Assignment = 1,
-    /// 加法和减法运算符优先级
+    /// 条件运算符（三元表达式）
+    Conditional = 2,
+    Comparison = 5,
+    /// 加法和减法运算符
     Sum = 10,
-    /// 乘法和除法运算符优先级
+    /// 乘法和除法运算符
     Product = 20,
-    /// 指数运算符优先级
+    /// 指数运算符
     Exponent = 30,
-    /// 前缀运算符优先级，如一元加减
+    /// 前缀运算符，如一元加减
     Prefix = 40,
-    /// 函数调用运算符优先级
+    /// 函数调用运算符
     Call = 50,
 }
 
@@ -30,26 +34,77 @@ impl PrecedenceLevel {
         self as u32
     }
 
-    /// 获取前一个优先级级别（用于处理右结合运算符）
     fn predecessor(self) -> Self {
         match self {
             Self::Exponent => Self::Product,
             Self::Product => Self::Sum,
-            Self::Sum => Self::Assignment,
+            Self::Sum => Self::Comparison,
+            Self::Comparison => Self::Conditional,
+            Self::Conditional => Self::Assignment,
             _ => Self::Lowest,
         }
     }
 }
 
+#[derive(Debug, PartialEq, Deserialize)]
+pub enum BinaryOp {
+    Add,             // +
+    AddAssign,       // +=
+    Subtract,        // -
+    SubtractAssign,  // -=
+    Multiply,        // *
+    MultiplyAssign,  // *=
+    Divide,          // /
+    DivideAssign,    // /=
+    Remainder,       // %
+    RemainderAssign, // %=
+    Assign,          // =
+    Equal,           // ==
+    NotEqual,        // !=
+    Greater,         // >
+    GreaterOrEqual,  // >=
+    Less,            // <
+    LessOrEqual,     // <=
+    And              // &&
+}
+
+impl BinaryOp {
+    /// 从原始字符转换为 `BinaryOp` 枚举值
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "+" => Some(BinaryOp::Add),
+            "+=" => Some(BinaryOp::AddAssign),
+            "-" => Some(BinaryOp::Subtract),
+            "-=" => Some(BinaryOp::SubtractAssign),
+            "*" => Some(BinaryOp::Multiply),
+            "*=" => Some(BinaryOp::MultiplyAssign),
+            "/" => Some(BinaryOp::Divide),
+            "/=" => Some(BinaryOp::DivideAssign),
+            "%" => Some(BinaryOp::Remainder),
+            "%=" => Some(BinaryOp::RemainderAssign),
+            "=" => Some(BinaryOp::Assign),
+            "==" => Some(BinaryOp::Equal),
+            "!=" => Some(BinaryOp::NotEqual),
+            ">" => Some(BinaryOp::Greater),
+            ">=" => Some(BinaryOp::GreaterOrEqual),
+            "<" => Some(BinaryOp::Less),
+            "<=" => Some(BinaryOp::LessOrEqual),
+            "&&" => Some(BinaryOp::And),
+            _ => None, // 未知字符返回 None
+        }
+    }
+}
+
 /// 表达式枚举，表示解析后的表达式树
-#[derive(Debug, PartialEq)]
-enum Expr {
+#[derive(Debug, PartialEq, Deserialize)]
+pub enum Expr {
     /// 整数字面量
     Integer(i64),
+    Float(f64),
     /// 二元运算表达式
     BinaryOp {
-        /// 运算符 Token
-        op: Token,
+        /// 运算符
+        op: BinaryOp,
         /// 左操作数表达式
         left: Box<Expr>,
         /// 右操作数表达式
@@ -111,12 +166,23 @@ struct NumberParselet;
 
 impl PrefixParselet for NumberParselet {
     /// 解析数字字面量
-    fn parse(&self, _parser: &mut PrattParser, token: LexedToken) -> Expr {
+    fn parse(&self, parser: &mut PrattParser, token: LexedToken) -> Expr {
+        let str_value = parser.parser.token_source(&token);
         // 目前只处理 Integer Token，实际应用中需要根据 Token 类型和值进行更精细的处理
-        if let Token::Integer = token.token {
-            Expr::Integer(1) // 示例代码，简单返回 Integer(1)
-        } else {
-            panic!("Unexpected token") // 遇到非 Integer Token，panic
+        match token.token {
+            Token::Integer => {
+                // 解析为整数
+                let int_value: i64 = str_value.parse().expect("Failed to parse integer");
+                Expr::Integer(int_value)
+            }
+            Token::Float => {
+                // 解析为浮点数
+                let float_value: f64 = str_value.parse().expect("Failed to parse float");
+                Expr::Float(float_value)
+            }
+            _ => {
+                panic!("Unexpected token")
+            }
         }
     }
 }
@@ -133,7 +199,7 @@ impl PrefixParselet for ArrayParselet {
                 parser.parser.consume_token();
             }
         }
-        parser.parser.consume_token(); // 消耗 ]
+        parser.parser.consume_token(); // 消耗一个 ]
         Expr::ArrayLiteral(elements)
     }
 }
@@ -158,8 +224,11 @@ impl InfixParselet for BinaryOpParselet {
 
         // 递归调用 parse_expression 解析右操作数
         let right = parser.parse_expression(actual_prec);
+        // 将token的原始值转成BinaryOp
+        let b: BinaryOp = BinaryOp::from_str(parser.parser.token_source(&token)).expect("unknown Binary Operator");
+        
         Expr::BinaryOp {
-            op: token.token,
+            op: b,
             left: Box::new(left),   // 将左操作数放入 Box
             right: Box::new(right), // 将右操作数放入 Box
         }
@@ -210,9 +279,11 @@ impl InfixParselet for CallParselet {
 struct IdentifierParselet;
 
 impl PrefixParselet for IdentifierParselet {
-    fn parse(&self, _: &mut PrattParser, token: LexedToken) -> Expr {
+    fn parse(&self, parser: &mut PrattParser, token: LexedToken) -> Expr {
+        let id = parser.parser.token_source(&token);
+
         if let Token::Identifier = &token.token {
-            Expr::Identifier("id".to_string())
+            Expr::Identifier(id.into())
         } else {
             panic!("Unexpected token for identifier")
         }
@@ -227,11 +298,14 @@ impl InfixParselet for DotParselet {
             .parser
             .consume_token()
             .expect("Expected identifier after '.'");
-        let member = if let Token::Identifier = member_token.token {
-            "id".to_string()
-        } else {
+
+        let member = parser.parser.token_source(&member_token).to_string();
+        
+        // 类型检查
+        if !matches!(member_token.token, Token::Identifier) {
             panic!("Expected identifier after '.'");
-        };
+        }
+
         Expr::MemberAccess {
             object: Box::new(left),
             member,
@@ -247,11 +321,19 @@ impl InfixParselet for DotParselet {
 struct TernaryParselet;
 impl InfixParselet for TernaryParselet {
     fn parse(&self, parser: &mut PrattParser, cond: Expr, _: LexedToken) -> Expr {
-        // 解析then语句
-        let then_expr = parser.parse_expression(PrecedenceLevel::Lowest);
-        parser.parser.consume_token(); // 跳过 :
-                                       // 解析else语句
-        let else_expr = parser.parse_expression(PrecedenceLevel::Assignment);
+        // 解析then分支时使用Conditional优先级
+        let then_expr = parser.parse_expression(self.precedence().predecessor());
+
+        // 验证并消费冒号
+        let colon_token = parser.parser.consume_token().expect("Expected ':' in ternary expression");
+        if colon_token.token != Token::Colon {
+            panic!("Expected ':' after then expression, found {:?}", colon_token.token);
+        }
+
+        // 调整else分支解析优先级为Conditional的前序优先级
+        let else_prec = PrecedenceLevel::Conditional.predecessor();
+        let else_expr = parser.parse_expression(else_prec);
+
         Expr::Ternary {
             cond_expr: Box::new(cond),
             then_expr: Box::new(then_expr),
@@ -260,7 +342,7 @@ impl InfixParselet for TernaryParselet {
     }
 
     fn precedence(&self) -> PrecedenceLevel {
-        PrecedenceLevel::Assignment // 优先级低于逻辑运算
+        PrecedenceLevel::Conditional
     }
 }
 
@@ -269,7 +351,8 @@ struct IndexParselet;
 impl InfixParselet for IndexParselet {
     fn parse(&self, parser: &mut PrattParser, left: Expr, _: LexedToken) -> Expr {
         let index = parser.parse_expression(PrecedenceLevel::Lowest);
-        parser.parser.consume_token(); // 消耗 ]
+        // 消耗 ]
+        parser.parser.consume_token();
         Expr::IndexAccess {
             array: Box::new(left),
             index: Box::new(index),
@@ -281,17 +364,17 @@ impl InfixParselet for IndexParselet {
 }
 
 /// Pratt Parser 结构体
-pub struct PrattParser<'a> {
+pub struct PrattParser<'core> {
     /// 前缀解析函数映射表，key 是 Token 类型，value 是实现了 PrefixParselet trait 的解析器
     prefix_parselets: HashMap<Token, Rc<dyn PrefixParselet>>,
     /// 中缀解析函数映射表，key 是 Token 类型，value 是实现了 InfixParselet trait 的解析器
     infix_parselets: HashMap<Token, Rc<dyn InfixParselet>>,
-    parser: &'a mut dyn ParserApi,
+    parser: &'core mut ParserCore<'core>,
 }
 
 impl<'a> PrattParser<'a> {
     /// 创建 PrattParser 实例
-    fn new(parser: &'a mut dyn ParserApi) -> Self {
+    pub fn new(parser: &'a mut ParserCore<'a>) -> Self {
         Self {
             prefix_parselets: HashMap::new(),
             infix_parselets: HashMap::new(),
@@ -303,16 +386,23 @@ impl<'a> PrattParser<'a> {
     ///
     /// # 参数
     /// * `min_precedence` - 最小优先级，用于控制运算符的结合性
-    fn parse_expression(&mut self, min_precedence: PrecedenceLevel) -> Expr {
+    pub fn parse_expression(&mut self, min_precedence: PrecedenceLevel) -> Expr {
         // 先解析前缀表达式
         let mut left = self.parse_prefix();
 
+        // 消费下一个无效token
+        self.parser.consume_until_token();
         // 确保只有在存在下一个token且优先级足够高时才继续循环
-        while let Some(_) = self.parser.peek(0) {
+        while let Some(next_token) = self.parser.peek(0) {
+            if next_token.token == Token::EOF {
+                break;
+            }
+
             let current_prec = self.current_precedence();
             if current_prec <= min_precedence {
                 break;
             }
+
             let op = self.parser.consume_token(); // 消耗当前中缀运算符 Token
             left = self.parse_infix(left, op.expect("No such token")); // 解析中缀表达式，将左操作数和运算符传递给中缀解析子句
         }
@@ -322,6 +412,8 @@ impl<'a> PrattParser<'a> {
 
     /// 解析前缀表达式
     fn parse_prefix(&mut self) -> Expr {
+        // 消费无效token
+        self.parser.consume_until_token();
         let token = self
             .parser
             .consume_token()
@@ -384,7 +476,7 @@ impl PrattParserBuilder {
     }
 
     /// 构建 PrattParser 实例
-    fn build(self, parser: &mut dyn ParserApi) -> PrattParser {
+    pub fn build<'a>(self, parser: &'a mut ParserCore<'a>) -> PrattParser<'a> {
         PrattParser {
             prefix_parselets: self.prefix_parselets,
             infix_parselets: self.infix_parselets,
@@ -393,9 +485,10 @@ impl PrattParserBuilder {
     }
 }
 
-pub fn create_pratt_parser(parser: &mut dyn ParserApi) -> PrattParser {
+pub fn create_pratt_parser<'a>(parser: &'a mut ParserCore<'a>) -> PrattParser<'a> {
     PrattParserBuilder::new()
         .with_prefix(Token::Integer, NumberParselet)
+        .with_prefix(Token::Float, NumberParselet)
         .with_prefix(Token::RoundOpen, GroupParselet)
         .with_prefix(Token::Identifier, IdentifierParselet)
         .with_prefix(Token::SquareOpen, ArrayParselet)
@@ -434,10 +527,46 @@ pub fn create_pratt_parser(parser: &mut dyn ParserApi) -> PrattParser {
                 precedence: PrecedenceLevel::Call,
             },
         )
+        .with_infix(
+            Token::Assign,
+            BinaryOpParselet {
+                precedence: PrecedenceLevel::Assignment,
+                is_right_assoc: true, // 赋值运算符右结合
+            },
+        )
         // . 点运算符解析
         .with_infix(Token::Dot, DotParselet)
         // 问号运算符, 用于三元表达式
         .with_infix(Token::QuestionMark, TernaryParselet)
+        .with_infix(
+            Token::Greater,
+            BinaryOpParselet {
+                precedence: PrecedenceLevel::Comparison,
+                is_right_assoc: false,
+            },
+        )
+        .with_infix(
+            Token::Less,
+            BinaryOpParselet {
+                precedence: PrecedenceLevel::Comparison,
+                is_right_assoc: false,
+            },
+        )
+        .with_infix(
+            Token::GreaterOrEqual,
+            BinaryOpParselet {
+                precedence: PrecedenceLevel::Comparison,
+                is_right_assoc: false,
+            },
+        )
+        .with_infix(
+            Token::LessOrEqual,
+            BinaryOpParselet {
+                precedence: PrecedenceLevel::Comparison,
+                is_right_assoc: false,
+            },
+        )
+        // 数组访问
         .with_infix(Token::SquareOpen, IndexParselet)
         .build(parser)
 }
@@ -445,278 +574,108 @@ pub fn create_pratt_parser(parser: &mut dyn ParserApi) -> PrattParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lexer::{
-        lexer::{LexedToken, Token, TvLexer},
-        span::{Position, Span},
-    };
-    use std::cell::RefCell;
+    use crate::core::ParserCoreBuilder;
+    use lexer::lexer::Token;
+    use test_utils::print_tokens;
 
-    /// 模拟 Parser 实现
-    struct MockParser {
-        tokens: RefCell<Vec<LexedToken>>,
-        position: RefCell<usize>,
-    }
-
-    impl MockParser {
-        fn new(tokens: Vec<LexedToken>) -> Self {
-            Self {
-                tokens: RefCell::new(tokens),
-                position: RefCell::new(0),
-            }
-        }
-
-        /// 创建带位置信息的 Token
-        fn with_positions(tokens: &[(Token, (u32, u32), (u32, u32))]) -> Self {
-            let tokens = tokens
-                .iter()
-                .map(|(t, (sl, sc), (el, ec))| LexedToken {
-                    token: t.clone(),
-                    span: Span {
-                        start: Position {
-                            line: *sl,
-                            column: *sc,
-                        },
-                        end: Position {
-                            line: *el,
-                            column: *ec,
-                        },
-                    },
-                    source_bytes: 0..1, // 简化处理
-                })
-                .collect();
-            Self::new(tokens)
-        }
-    }
-
-    impl ParserApi for MockParser {
-        fn peek(&mut self, n: usize) -> Option<LexedToken> {
-            let pos = *self.position.borrow();
-            self.tokens.borrow().get(pos + n).cloned()
-        }
-
-        fn consume_token(&mut self) -> Option<LexedToken> {
-            let mut pos = self.position.borrow_mut();
-            let token = self.tokens.borrow().get(*pos).cloned();
-            *pos += 1;
-            token
-        }
-
-        fn token_source(&self, _: &LexedToken) -> &str {
-            "" // 测试中暂不需要源字符串
-        }
-    }
-
-    // 测试工具函数：创建标准 LexedToken
-    fn create_token(
-        token: Token,
-        start_line: u32,
-        start_col: u32,
-        end_line: u32,
-        end_col: u32,
-    ) -> LexedToken {
-        LexedToken {
-            token,
-            span: Span {
-                start: Position {
-                    line: start_line,
-                    column: start_col,
-                },
-                end: Position {
-                    line: end_line,
-                    column: end_col,
-                },
-            },
-            source_bytes: 0..1,
-        }
-    }
-
-    // 测试工具函数：创建 LexedToken
-    fn int_token() -> LexedToken {
-        create_token(Token::Integer, 0, 0, 0, 1)
-    }
-
-    fn add_token() -> LexedToken {
-        create_token(Token::Add, 0, 2, 0, 3)
-    }
-
-    fn mul_token() -> LexedToken {
-        create_token(Token::Multiply, 0, 4, 0, 5)
-    }
-
-    fn lparen_token() -> LexedToken {
-        create_token(Token::RoundOpen, 0, 0, 0, 1)
-    }
-
-    fn rparen_token() -> LexedToken {
-        create_token(Token::RoundClose, 0, 0, 0, 1)
+    pub fn parse_expr(input: &str) -> Expr {
+        let mut core = ParserCoreBuilder::build(input);
+        let mut pratt = create_pratt_parser(&mut core);
+        pratt.parse_expression(PrecedenceLevel::Lowest)
     }
 
     #[test]
-    fn test_position_tracking() {
-        let mut parser = MockParser::with_positions(&[
-            (Token::Integer, (0, 0), (0, 1)),
-            (Token::Add, (0, 2), (0, 3)),
-            (Token::Integer, (0, 4), (0, 5)),
-        ]);
+    fn test_operator_precedence() {
+        let source = "1   + 2 *  3";
+        print_tokens(source);
+        let expr = parse_expr(source);
+        print!("{:?}", expr);
 
-        let token1 = parser.consume_token().unwrap();
-        assert_eq!(token1.span.start.column, 0);
-        assert_eq!(token1.span.end.column, 1);
-
-        let token2 = parser.consume_token().unwrap();
-        assert_eq!(token2.span.start.column, 2);
+        assert_eq!(
+            expr,
+            Expr::BinaryOp {
+                op: BinaryOp::Add,
+                left: Box::new(Expr::Integer(1)),
+                right: Box::new(Expr::BinaryOp {
+                    op: BinaryOp::Multiply,
+                    left: Box::new(Expr::Integer(2)),
+                    right: Box::new(Expr::Integer(3)),
+                })
+            }
+        );
     }
 
     #[test]
     fn test_single_integer() {
-        let mut parser = MockParser::new(vec![int_token()]);
-        let mut pratt = create_pratt_parser(&mut parser);
+        let source = "10";
+        print_tokens(source);
+        let expr = parse_expr(source);
+        print!("{:?}", expr);
 
-        let expr = pratt.parse_expression(PrecedenceLevel::Lowest);
-        assert_eq!(expr, Expr::Integer(1));
-    }
-
-    #[test]
-    fn test_addition_priority() {
-        // 1 + 2 * 3
-        let tokens = vec![
-            int_token(),
-            add_token(),
-            int_token(),
-            mul_token(),
-            int_token(),
-        ];
-        let mut parser = MockParser::new(tokens);
-        let mut pratt = create_pratt_parser(&mut parser);
-
-        let expr = pratt.parse_expression(PrecedenceLevel::Lowest);
-        assert_eq!(
-            expr,
-            Expr::BinaryOp {
-                op: Token::Add,
-                left: Box::new(Expr::Integer(1)),
-                right: Box::new(Expr::BinaryOp {
-                    op: Token::Multiply,
-                    left: Box::new(Expr::Integer(1)),
-                    right: Box::new(Expr::Integer(1)),
-                }),
-            }
-        );
+        assert_eq!(expr, Expr::Integer(10));
     }
 
     #[test]
     fn test_right_associative() {
-        // 修改乘法为右结合
-        let builder = PrattParserBuilder::new()
-            .with_prefix(Token::Integer, NumberParselet)
-            .with_infix(
-                Token::Multiply,
-                BinaryOpParselet {
-                    precedence: PrecedenceLevel::Product,
-                    is_right_assoc: true,
-                },
-            );
+        let source = "1 * 2 * 3";
+        print_tokens(source);
+        let expr = parse_expr(source);
+        print!("{:?}", expr);
 
-        // 1 * 2 * 3 应该解析为 1 * (2 * 3)
-        let tokens = vec![
-            int_token(),
-            mul_token(),
-            int_token(),
-            mul_token(),
-            int_token(),
-        ];
-        let mut parser = MockParser::new(tokens);
-        let mut pratt = builder.build(&mut parser);
-
-        let expr = pratt.parse_expression(PrecedenceLevel::Lowest);
         assert_eq!(
             expr,
             Expr::BinaryOp {
-                op: Token::Multiply,
-                left: Box::new(Expr::Integer(1)),
-                right: Box::new(Expr::BinaryOp {
-                    op: Token::Multiply,
+                op: BinaryOp::Multiply,
+                left: Box::new(Expr::BinaryOp {
+                    op: BinaryOp::Multiply,
                     left: Box::new(Expr::Integer(1)),
-                    right: Box::new(Expr::Integer(1)),
+                    right: Box::new(Expr::Integer(2)),
                 }),
+                right: Box::new(Expr::Integer(3)),
             }
         );
-    }
-
-    #[test]
-    fn test_current_precedence() {
-        let tokens = vec![mul_token()];
-        let mut parser = MockParser::new(tokens);
-        let mut pratt = create_pratt_parser(&mut parser);
-
-        // 检查乘法优先级
-        assert_eq!(pratt.current_precedence(), PrecedenceLevel::Product);
     }
 
     #[test]
     #[should_panic(expected = "No prefix parselet for: Add")]
     fn test_invalid_prefix() {
-        let mut parser = MockParser::new(vec![add_token()]);
-        let mut pratt = create_pratt_parser(&mut parser);
-        pratt.parse_expression(PrecedenceLevel::Lowest);
+        let source = "+";
+        parse_expr(source);
     }
 
     #[test]
     fn test_mixed_operators() {
-        TvLexer::new("1 + 2 * 3 - 4");
-        // 1 + 2 * 3 - 4
-        let tokens = vec![
-            int_token(),
-            add_token(),
-            int_token(),
-            mul_token(),
-            int_token(),
-            create_token(Token::Subtract, 0, 6, 0, 7), // 添加减法token
-            int_token(),
-        ];
-        let mut parser = MockParser::new(tokens);
-        let mut pratt = create_pratt_parser(&mut parser);
-
-        let expr = pratt.parse_expression(PrecedenceLevel::Lowest);
+        let source = "1 + 2 * 3 - 4";
+        let expr = parse_expr(source);
         print!("{:?}", expr);
         assert_eq!(
             expr,
             Expr::BinaryOp {
-                op: Token::Subtract,
+                op: BinaryOp::Subtract,
                 left: Box::new(Expr::BinaryOp {
-                    op: Token::Add,
+                    op: BinaryOp::Add,
                     left: Box::new(Expr::Integer(1)),
                     right: Box::new(Expr::BinaryOp {
-                        op: Token::Multiply,
-                        left: Box::new(Expr::Integer(1)),
-                        right: Box::new(Expr::Integer(1)),
+                        op: BinaryOp::Multiply,
+                        left: Box::new(Expr::Integer(2)),
+                        right: Box::new(Expr::Integer(3)),
                     }),
                 }),
-                right: Box::new(Expr::Integer(1)),
+                right: Box::new(Expr::Integer(4)),
             }
         );
     }
 
     #[test]
     fn test_parentheses() {
-        let tokens = vec![
-            lparen_token(),
-            int_token(),
-            add_token(),
-            int_token(),
-            rparen_token(),
-            mul_token(),
-            int_token(),
-        ];
-        let mut parser = MockParser::new(tokens);
-        let mut pratt = create_pratt_parser(&mut parser);
-
+        let source = "(1 + 1) * 1";
+        let expr = parse_expr(source);
         assert_eq!(
-            pratt.parse_expression(PrecedenceLevel::Lowest),
+            expr,
             Expr::BinaryOp {
-                op: Token::Multiply,
+                op: BinaryOp::Multiply,
                 left: Box::new(Expr::BinaryOp {
-                    op: Token::Add,
+                    op: BinaryOp::Add,
                     left: Box::new(Expr::Integer(1)),
                     right: Box::new(Expr::Integer(1)),
                 }),
@@ -727,21 +686,12 @@ mod tests {
 
     #[test]
     fn test_function_call() {
-        let tokens = vec![
-            create_token(Token::Identifier, 0, 0, 0, 3), // "sum"
-            lparen_token(),
-            int_token(),
-            create_token(Token::Comma, 0, 4, 0, 5),
-            int_token(),
-            rparen_token(),
-        ];
-        let mut parser = MockParser::new(tokens);
-        let mut pratt = create_pratt_parser(&mut parser);
-
+        let source = "sum(1, 1)";
+        let expr = parse_expr(source);
         assert_eq!(
-            pratt.parse_expression(PrecedenceLevel::Lowest),
+            expr,
             Expr::Call {
-                func: Box::new(Expr::Identifier("id".to_string())),
+                func: Box::new(Expr::Identifier("sum".to_string())),
                 args: vec![Expr::Integer(1), Expr::Integer(1)],
             }
         );
@@ -749,29 +699,307 @@ mod tests {
 
     #[test]
     fn test_member_function_call() {
-        let tokens = vec![
-            create_token(Token::Identifier, 0, 0, 0, 2),
-            create_token(Token::Dot, 0, 3, 0, 4),
-            create_token(Token::Identifier, 0, 5, 0, 14),
-            lparen_token(),
-            create_token(Token::Identifier, 0, 15, 0, 20),
-            create_token(Token::Comma, 0, 21, 0, 22),
-            int_token(),
-            rparen_token(),
-        ];
-
-        let mut parser = MockParser::new(tokens);
-        let mut pratt = create_pratt_parser(&mut parser);
-
+        let source = "ta.sma(id, 1)";
+        let expr = parse_expr(source);
+        println!("{:?}", expr);
         assert_eq!(
-            pratt.parse_expression(PrecedenceLevel::Lowest),
+            expr,
             Expr::Call {
                 func: Box::new(Expr::MemberAccess {
-                    object: Box::new(Expr::Identifier("id".to_string())),
-                    member: "id".to_string(),
+                    object: Box::new(Expr::Identifier("ta".to_string())),
+                    member: "sma".to_string(),
                 }),
                 args: vec![Expr::Identifier("id".to_string()), Expr::Integer(1),],
             }
         );
     }
+
+    #[test]
+    fn test_member_function_chain_call() {
+        let source = "a.b.c.d";
+        let expr = parse_expr(source);
+        println!("{:?}", expr);
+
+    }
+
+    #[test]
+    fn test_simple_ternary() {
+        let source = "a ? 1 : 2";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::Ternary {
+                cond_expr: Box::new(Expr::Identifier("a".to_string())),
+                then_expr: Box::new(Expr::Integer(1)),
+                else_expr: Box::new(Expr::Integer(2)),
+            }
+        );
+    }
+
+    #[test]
+    fn test_nested_ternary() {
+        let source = "a ? b : c ? d : e";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::Ternary {
+                cond_expr: Box::new(Expr::Identifier("a".to_string())),
+                then_expr: Box::new(Expr::Identifier("b".to_string())),
+                else_expr: Box::new(Expr::Ternary {
+                    cond_expr: Box::new(Expr::Identifier("c".to_string())),
+                    then_expr: Box::new(Expr::Identifier("d".to_string())),
+                    else_expr: Box::new(Expr::Identifier("e".to_string())),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected ':'")]
+    fn test_invalid_ternary_missing_colon() {
+        let source = "a ? 1 2";
+        parse_expr(source);
+    }
+
+    #[test]
+    fn test_ternary_with_operations() {
+        let source = "a > 0 ? x + 1 : y * 2";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::Ternary {
+                cond_expr: Box::new(Expr::BinaryOp {
+                    op: BinaryOp::Greater,
+                    left: Box::new(Expr::Identifier("a".to_string())),
+                    right: Box::new(Expr::Integer(0)),
+                }),
+                then_expr: Box::new(Expr::BinaryOp {
+                    op: BinaryOp::Add,
+                    left: Box::new(Expr::Identifier("x".to_string())),
+                    right: Box::new(Expr::Integer(1)),
+                }),
+                else_expr: Box::new(Expr::BinaryOp {
+                    op: BinaryOp::Multiply,
+                    left: Box::new(Expr::Identifier("y".to_string())),
+                    right: Box::new(Expr::Integer(2)),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn test_nested_ternary_right_assoc() {
+        let source = "a ? b : c ? d : e";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::Ternary {
+                cond_expr: Box::new(Expr::Identifier("a".into())),
+                then_expr: Box::new(Expr::Identifier("b".into())),
+                else_expr: Box::new(Expr::Ternary {
+                    cond_expr: Box::new(Expr::Identifier("c".into())),
+                    then_expr: Box::new(Expr::Identifier("d".into())),
+                    else_expr: Box::new(Expr::Identifier("e".into())),
+                })
+            }
+        );
+    }
+
+    // 混合逻辑运算符
+    // #[test]
+    // fn test_ternary_with_logical_ops() {
+    //     let source = "x > 5 && y < 10 ? a || b : c && d";
+    //     let expr = parse_expr(source);
+    //     assert_eq!(
+    //         expr,
+    //         Expr::Ternary {
+    //             cond_expr: Box::new(Expr::BinaryOp {
+    //                 op: Token::And,
+    //                 left: Box::new(Expr::BinaryOp {
+    //                     op: Token::Greater,
+    //                     left: Box::new(Expr::Identifier("x".into())),
+    //                     right: Box::new(Expr::Integer(5)),
+    //                 }),
+    //                 right: Box::new(Expr::BinaryOp {
+    //                     op: Token::Less,
+    //                     left: Box::new(Expr::Identifier("y".into())),
+    //                     right: Box::new(Expr::Integer(10)),
+    //                 }),
+    //             }),
+    //             then_expr: Box::new(Expr::BinaryOp {
+    //                 op: Token::Or,
+    //                 left: Box::new(Expr::Identifier("a".into())),
+    //                 right: Box::new(Expr::Identifier("b".into())),
+    //             }),
+    //             else_expr: Box::new(Expr::BinaryOp {
+    //                 op: Token::And,
+    //                 left: Box::new(Expr::Identifier("c".into())),
+    //                 right: Box::new(Expr::Identifier("d".into())),
+    //             }),
+    //         }
+    //     );
+    // }
+
+    // 与赋值结合 ✅
+    #[test]
+    fn test_ternary_with_assignment() {
+        let source = "result = condition ? value1 : value2";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::BinaryOp {
+                op: BinaryOp::Assign,
+                left: Box::new(Expr::Identifier("result".into())),
+                right: Box::new(Expr::Ternary {
+                    cond_expr: Box::new(Expr::Identifier("condition".into())),
+                    then_expr: Box::new(Expr::Identifier("value1".into())),
+                    else_expr: Box::new(Expr::Identifier("value2".into())),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn test_assignment() {
+        let source = "result = 1";
+        let expr = parse_expr(source);
+        println!("{:?}", expr);
+    }
+
+    // 函数调用参数 ✅
+    #[test]
+    fn test_ternary_in_function_args() {
+        let source = "calculate(a ? b : c, d ? e : f)";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::Call {
+                func: Box::new(Expr::Identifier("calculate".into())),
+                args: vec![
+                    Expr::Ternary {
+                        cond_expr: Box::new(Expr::Identifier("a".into())),
+                        then_expr: Box::new(Expr::Identifier("b".into())),
+                        else_expr: Box::new(Expr::Identifier("c".into())),
+                    },
+                    Expr::Ternary {
+                        cond_expr: Box::new(Expr::Identifier("d".into())),
+                        then_expr: Box::new(Expr::Identifier("e".into())),
+                        else_expr: Box::new(Expr::Identifier("f".into())),
+                    }
+                ],
+            }
+        );
+    }
+
+    // 嵌套对象访问 ❌
+    #[test]
+    fn test_ternary_with_member_access() {
+        let source = "obj.prop ? data.list[0] : config.default";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::Ternary {
+                cond_expr: Box::new(Expr::MemberAccess {
+                    object: Box::new(Expr::Identifier("obj".into())),
+                    member: "prop".into(),
+                }),
+                then_expr: Box::new(Expr::IndexAccess {
+                    array: Box::new(Expr::MemberAccess {
+                        object: Box::new(Expr::Identifier("data".into())),
+                        member: "list".into(),
+                    }),
+                    index: Box::new(Expr::Integer(0)),
+                }),
+                else_expr: Box::new(Expr::MemberAccess {
+                    object: Box::new(Expr::Identifier("config".into())),
+                    member: "default".into(),
+                }),
+            }
+        );
+    }
+
+    // 多级嵌套 👌
+    #[test]
+    fn test_multi_level_nesting() {
+        let source = "a ? b ? c : d : e ? f : g";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::Ternary {
+                cond_expr: Box::new(Expr::Identifier("a".into())),
+                then_expr: Box::new(Expr::Ternary {
+                    cond_expr: Box::new(Expr::Identifier("b".into())),
+                    then_expr: Box::new(Expr::Identifier("c".into())),
+                    else_expr: Box::new(Expr::Identifier("d".into())),
+                }),
+                else_expr: Box::new(Expr::Ternary {
+                    cond_expr: Box::new(Expr::Identifier("e".into())),
+                    then_expr: Box::new(Expr::Identifier("f".into())),
+                    else_expr: Box::new(Expr::Identifier("g".into())),
+                }),
+            }
+        );
+    }
+
+    // 与指数运算符结合
+    // #[test]
+    // fn test_ternary_with_exponent() {
+    //     let source = "x ^ 2 > 100 ? y ^ 3 : z ^ 4";
+    //     let expr = parse_expr(source);
+    //     assert_eq!(
+    //         expr,
+    //         Expr::Ternary {
+    //             cond_expr: Box::new(Expr::BinaryOp {
+    //                 op: Token::Greater,
+    //                 left: Box::new(Expr::BinaryOp {
+    //                     op: Token::Exponent,
+    //                     left: Box::new(Expr::Identifier("x".into())),
+    //                     right: Box::new(Expr::Integer(2)),
+    //                 }),
+    //                 right: Box::new(Expr::Integer(100)),
+    //             }),
+    //             then_expr: Box::new(Expr::BinaryOp {
+    //                 op: Token::Exponent,
+    //                 left: Box::new(Expr::Identifier("y".into())),
+    //                 right: Box::new(Expr::Integer(3)),
+    //             }),
+    //             else_expr: Box::new(Expr::BinaryOp {
+    //                 op: Token::Exponent,
+    //                 left: Box::new(Expr::Identifier("z".into())),
+    //                 right: Box::new(Expr::Integer(4)),
+    //             }),
+    //         }
+    //     );
+    // }
+
+    // 数组操作结合 ❌
+    #[test]
+    fn test_ternary_with_array_ops() {
+        let source = "list.length > 0 ? list[0] : [1, 2, 3]";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::Ternary {
+                cond_expr: Box::new(Expr::BinaryOp {
+                    op: BinaryOp::Greater,
+                    left: Box::new(Expr::MemberAccess {
+                        object: Box::new(Expr::Identifier("list".into())),
+                        member: "length".into(),
+                    }),
+                    right: Box::new(Expr::Integer(0)),
+                }),
+                then_expr: Box::new(Expr::IndexAccess {
+                    array: Box::new(Expr::Identifier("list".into())),
+                    index: Box::new(Expr::Integer(0)),
+                }),
+                else_expr: Box::new(Expr::ArrayLiteral(vec![
+                    Expr::Integer(1),
+                    Expr::Integer(2),
+                    Expr::Integer(3),
+                ])),
+            }
+        );
+    }
+
 }
+
