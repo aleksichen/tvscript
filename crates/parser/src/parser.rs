@@ -6,19 +6,24 @@ use lexer::span::Span;
 use crate::ast::Ast;
 use crate::ast::AstIndex;
 use crate::core::ParserCore;
+use crate::core::ParserCoreBuilder;
 use crate::error::Error;
 use crate::error::Result;
 use crate::node::AstVec;
 use crate::node::Node;
+use crate::pratt::create_pratt_parser;
 use crate::pratt::Expr;
 use crate::pratt::PrattParser;
 
 // 
-pub struct TvParser {
-
+pub struct TvParser<'a> {
+    pub pratt: PrattParser<'a>,
+    pub core: ParserCore<'a>,
 }
 
-impl TvParser {
+impl <'a>TvParser<'a> {
+
+
     pub fn parse () {}
 }
 

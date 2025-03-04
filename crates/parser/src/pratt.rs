@@ -65,7 +65,7 @@ pub enum BinaryOp {
     GreaterOrEqual,  // >=
     Less,            // <
     LessOrEqual,     // <=
-    And              // &&
+    And,             // &&
 }
 
 impl BinaryOp {
@@ -225,8 +225,9 @@ impl InfixParselet for BinaryOpParselet {
         // 递归调用 parse_expression 解析右操作数
         let right = parser.parse_expression(actual_prec);
         // 将token的原始值转成BinaryOp
-        let b: BinaryOp = BinaryOp::from_str(parser.parser.token_source(&token)).expect("unknown Binary Operator");
-        
+        let b: BinaryOp = BinaryOp::from_str(parser.parser.token_source(&token))
+            .expect("unknown Binary Operator");
+
         Expr::BinaryOp {
             op: b,
             left: Box::new(left),   // 将左操作数放入 Box
@@ -300,7 +301,7 @@ impl InfixParselet for DotParselet {
             .expect("Expected identifier after '.'");
 
         let member = parser.parser.token_source(&member_token).to_string();
-        
+
         // 类型检查
         if !matches!(member_token.token, Token::Identifier) {
             panic!("Expected identifier after '.'");
@@ -325,9 +326,15 @@ impl InfixParselet for TernaryParselet {
         let then_expr = parser.parse_expression(self.precedence().predecessor());
 
         // 验证并消费冒号
-        let colon_token = parser.parser.consume_token().expect("Expected ':' in ternary expression");
+        let colon_token = parser
+            .parser
+            .consume_token()
+            .expect("Expected ':' in ternary expression");
         if colon_token.token != Token::Colon {
-            panic!("Expected ':' after then expression, found {:?}", colon_token.token);
+            panic!(
+                "Expected ':' after then expression, found {:?}",
+                colon_token.token
+            );
         }
 
         // 调整else分支解析优先级为Conditional的前序优先级
@@ -405,6 +412,8 @@ impl<'a> PrattParser<'a> {
 
             let op = self.parser.consume_token(); // 消耗当前中缀运算符 Token
             left = self.parse_infix(left, op.expect("No such token")); // 解析中缀表达式，将左操作数和运算符传递给中缀解析子句
+            // 消费下一个无效token
+            self.parser.consume_until_token();
         }
 
         left // 返回最终的表达式树
@@ -719,7 +728,6 @@ mod tests {
         let source = "a.b.c.d";
         let expr = parse_expr(source);
         println!("{:?}", expr);
-
     }
 
     #[test]
@@ -891,7 +899,7 @@ mod tests {
         );
     }
 
-    // 嵌套对象访问 ❌
+    // 嵌套对象访问 ✅
     #[test]
     fn test_ternary_with_member_access() {
         let source = "obj.prop ? data.list[0] : config.default";
@@ -918,7 +926,7 @@ mod tests {
         );
     }
 
-    // 多级嵌套 👌
+    // 多级嵌套 ✅
     #[test]
     fn test_multi_level_nesting() {
         let source = "a ? b ? c : d : e ? f : g";
@@ -972,7 +980,7 @@ mod tests {
     //     );
     // }
 
-    // 数组操作结合 ❌
+    // 数组操作结合 对
     #[test]
     fn test_ternary_with_array_ops() {
         let source = "list.length > 0 ? list[0] : [1, 2, 3]";
@@ -1000,6 +1008,4 @@ mod tests {
             }
         );
     }
-
 }
-
