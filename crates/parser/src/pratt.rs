@@ -42,6 +42,7 @@ impl PrecedenceLevel {
             Self::Sum => Self::Comparison,
             Self::Comparison => Self::Conditional,
             Self::Conditional => Self::Assignment,
+            Self::Assignment => Self::Lowest,
             _ => Self::Lowest,
         }
     }
@@ -645,6 +646,50 @@ mod tests {
         print_tokens(source);
         let expr = parse_expr(source);
         print!("{:?}", expr);
+    }
+
+    #[test]
+    fn test_right_associativity() {
+        let source = "a = b = 5";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::BinaryOp {
+                op: BinaryOp::Assign,
+                left: Box::new(Expr::Identifier("a".into())),
+                right: Box::new(Expr::BinaryOp {
+                    op: BinaryOp::Assign,
+                    left: Box::new(Expr::Identifier("b".into())),
+                    right: Box::new(Expr::Integer(5)),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn test_mixed_assignment() {
+        let source = "x = a + (b = 5) * 3";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::BinaryOp {
+                op: BinaryOp::Assign,
+                left: Box::new(Expr::Identifier("x".into())),
+                right: Box::new(Expr::BinaryOp {
+                    op: BinaryOp::Add,
+                    left: Box::new(Expr::Identifier("a".into())),
+                    right: Box::new(Expr::BinaryOp {
+                        op: BinaryOp::Multiply,
+                        left: Box::new(Expr::BinaryOp {
+                            op: BinaryOp::Assign,
+                            left: Box::new(Expr::Identifier("b".into())),
+                            right: Box::new(Expr::Integer(5)),
+                        }),
+                        right: Box::new(Expr::Integer(3)),
+                    }),
+                }),
+            }
+        );
     }
 
     #[test]
