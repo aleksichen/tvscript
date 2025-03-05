@@ -76,8 +76,6 @@ impl Ast {
     }
 
     pub fn push(&mut self, node: Node, span: Span) -> Result<AstIndex> {
-        // We could potentially achieve some compression by
-        // using a set for the spans, for now a Vec will do.
         self.spans.push(span);
         let span_index = AstIndex::try_from(self.spans.len() - 1)
             .map_err(|_| Error::new(InternalError::AstCapacityOverflow.into(), span))?;

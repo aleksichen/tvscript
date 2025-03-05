@@ -213,6 +213,7 @@ dependencies = [
  "assert-json-diff",
  "lexer",
  "memory",
+ "mise",
  "serde",
  "serde_json",
  "similar-asserts",

@@ -81,18 +81,3 @@ pub enum Literal {
     Bool(bool),
     Str(String),
 }
-
-// Pratt解析器优先级表
-enum Precedence {
-    Assignment = 1, // =
-    Ternary = 2,    // ? :
-    LogicalOr = 3,  // or
-    LogicalAnd = 4, // and
-    Equality = 5,   // == !=
-    Comparison = 6, // < > <= >=
-    Term = 7,       // + -
-    Factor = 8,     // * / %
-    Unary = 9,      // - !
-    Call = 10,      // () []
-    Primary = 11,
-}

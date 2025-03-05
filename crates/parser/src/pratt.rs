@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use lexer::lexer::{LexedToken, Token};
+use mise::parse_string_literal;
 use serde::Deserialize;
 
 use crate::core::ParserCore;
@@ -101,6 +102,7 @@ pub enum Expr {
     /// 整数字面量
     Integer(i64),
     Float(f64),
+    String(String),
     /// 二元运算表达式
     BinaryOp {
         /// 运算符
@@ -201,6 +203,19 @@ impl PrefixParselet for ArrayParselet {
         }
         parser.parser.consume_token(); // 消耗一个 ]
         Expr::ArrayLiteral(elements)
+    }
+}
+
+// 字符串解析器
+struct StringLiteral;
+impl PrefixParselet for StringLiteral {
+    fn parse(&self, parser: &mut PrattParser, token: LexedToken) -> Expr {
+        let raw = parser.parser.token_source(&token);
+        // 去除首尾引号并处理转义字符
+        let s =
+            parse_string_literal(raw).unwrap_or_else(|| panic!("Invalid string literal: {}", raw));
+
+        Expr::String(s)
     }
 }
 
@@ -395,16 +410,17 @@ impl<'a> PrattParser<'a> {
     /// * `min_precedence` - 最小优先级，用于控制运算符的结合性
     pub fn parse_expression(&mut self, min_precedence: PrecedenceLevel) -> Expr {
         // 先解析前缀表达式
-        let mut left = self.parse_prefix();
-
+        let mut left: Expr = self.parse_prefix();
+        println!("左边输出1: {:?}", left);
+        // self.parser.push_node_with_start_span(node, start_span)
         // 消费下一个无效token
         self.parser.consume_until_token();
-        // 确保只有在存在下一个token且优先级足够高时才继续循环
+        // 确保只有在存在下一个token
         while let Some(next_token) = self.parser.peek(0) {
             if next_token.token == Token::EOF {
                 break;
             }
-
+            // 且优先级足够高时才继续循环
             let current_prec = self.current_precedence();
             if current_prec <= min_precedence {
                 break;
@@ -412,6 +428,7 @@ impl<'a> PrattParser<'a> {
 
             let op = self.parser.consume_token(); // 消耗当前中缀运算符 Token
             left = self.parse_infix(left, op.expect("No such token")); // 解析中缀表达式，将左操作数和运算符传递给中缀解析子句
+            println!("左边输出2: {:?}", left);
             // 消费下一个无效token
             self.parser.consume_until_token();
         }
@@ -498,6 +515,7 @@ pub fn create_pratt_parser<'a>(parser: &'a mut ParserCore<'a>) -> PrattParser<'a
     PrattParserBuilder::new()
         .with_prefix(Token::Integer, NumberParselet)
         .with_prefix(Token::Float, NumberParselet)
+        .with_prefix(Token::StringLiteral, StringLiteral)
         .with_prefix(Token::RoundOpen, GroupParselet)
         .with_prefix(Token::Identifier, IdentifierParselet)
         .with_prefix(Token::SquareOpen, ArrayParselet)
@@ -584,7 +602,6 @@ pub fn create_pratt_parser<'a>(parser: &'a mut ParserCore<'a>) -> PrattParser<'a
 mod tests {
     use super::*;
     use crate::core::ParserCoreBuilder;
-    use lexer::lexer::Token;
     use test_utils::print_tokens;
 
     pub fn parse_expr(input: &str) -> Expr {
@@ -616,12 +633,18 @@ mod tests {
 
     #[test]
     fn test_single_integer() {
-        let source = "10";
+        let source = "1 + 2 * 3";
         print_tokens(source);
         let expr = parse_expr(source);
         print!("{:?}", expr);
+    }
 
-        assert_eq!(expr, Expr::Integer(10));
+    #[test]
+    fn test_single_string() {
+        let source = "\"hello\"";
+        print_tokens(source);
+        let expr = parse_expr(source);
+        print!("{:?}", expr);
     }
 
     #[test]

@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use lexer::lexer::LexedToken;
 use lexer::lexer::Token;
 use lexer::lexer::TvLexer as Lexer;
@@ -16,16 +18,33 @@ use crate::pratt::Expr;
 use crate::pratt::PrattParser;
 
 // 
-pub struct TvParser<'a> {
-    pub pratt: PrattParser<'a>,
-    pub core: ParserCore<'a>,
+pub struct Parser<'source> {
+    core: ParserCore<'source>,
 }
 
-impl <'a>TvParser<'a> {
+impl<'source> Parser <'source>{
+    pub fn new (source: &'source str) -> Self {
+        let core = ParserCoreBuilder::build(source);
+        Parser { core }
+    }
+
+    pub fn parse_program(&mut self) -> Result<AstIndex> {
+        todo!()
+    }
+
+    pub fn parse_statement(&mut self) -> Result<Option<AstIndex>> {
+        todo!()
+    }
+
+    pub fn parse_expression(&mut self) -> Result<Option<AstIndex>> {
+        // 按需创建临时的 PrattParser
+        // let mut pratt = PrattParser::new(&mut self.core);
+        // pratt.parse_expression(PrecedenceLevel::Lowest)
+        todo!()
+    }
+}   
 
 
-    pub fn parse () {}
-}
 
 // trait RecursiveDescent {
 //     /// 解析一个程序。
@@ -151,26 +170,3 @@ impl <'a>TvParser<'a> {
 //         todo!()
 //     }
 // }
-
-// 定义可测试的 trait 接口
-pub trait ExpressionParser {
-    fn parse_expression(
-        &self,
-        core: &mut ParserCore,
-        precedence: u8
-    ) -> Result<Expr>;
-}
-
-pub struct RecursiveDescent<P: ExpressionParser> {
-    expr_parser: P,
-}
-
-impl <'a> ExpressionParser for PrattParser <'a>{
-    fn parse_expression(
-        &self,
-        core: &mut ParserCore,
-        precedence: u8
-    ) -> Result<Expr> {
-        todo!()
-    }
-}

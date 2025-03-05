@@ -11,6 +11,7 @@ rc = []
 [dependencies]
 lexer = { path = "../lexer" }
 memory = { path = "../memory" }
+mise = { path = "../mise" }
 thiserror = { workspace = true }
 smallvec = { workspace = true }
 serde = { version = "1.0", features = ["derive"] }

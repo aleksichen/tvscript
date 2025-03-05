@@ -91,7 +91,7 @@ impl<'source> ParserCore<'source> {
         self.current_token.span
     }
 
-    fn push_node_with_start_span(&mut self, node: Node, start_span: Span) -> Result<AstIndex> {
+    pub fn push_node_with_start_span(&mut self, node: Node, start_span: Span) -> Result<AstIndex> {
         self.push_node_with_span(node, self.span_with_start(start_span))
     }
 
