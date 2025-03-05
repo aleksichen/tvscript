@@ -44,6 +44,7 @@ pub enum Token {
     GreaterOrEqual,  // >=
     Less,            // <
     LessOrEqual,     // <=
+    Not,
     // 符号
     Colon,
     Comma,
@@ -296,6 +297,7 @@ impl<'a> TokenLexer<'a> {
         check_symbol!("]", SquareClose);
         check_symbol!("{", CurlyOpen);
         check_symbol!("}", CurlyClose);
+        check_symbol!("!", Not);
 
         None
     }

@@ -24,7 +24,7 @@ impl StateProcessor for InitialProcessor {
             // 斜杠 -> 进入斜杠处理
             '/' => lexer.transition(State::InSlash),
             // 运算符 -> 进入运算符状态
-            '=' | '>' | '<' | '!' | '+' | '-' | '*' | '%' | ':' => {
+            '=' | '>' | '<' | '+' | '-' | '*' | '%' | ':' => {
                 lexer.transition(State::InOperator)
             }
             // 双引号, 字符串字面量处理
@@ -273,6 +273,8 @@ impl StateProcessor for OperatorProcessor {
         map_symbol!("*", Multiply);
         map_symbol!("/", Divide);
         map_symbol!("%", Remainder);
+        map_symbol!("!", Not);
+
 
         Token::Error
     }

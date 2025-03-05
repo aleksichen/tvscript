@@ -47,6 +47,20 @@ impl PrecedenceLevel {
         }
     }
 }
+#[derive(Debug, PartialEq, Deserialize, Clone)]
+pub enum UnaryOp {
+    Negate, // - (负号)
+    Not,    // ! (逻辑非)
+}
+impl UnaryOp {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "-" => Some(UnaryOp::Negate),
+            "!" => Some(UnaryOp::Not),
+            _ => None, // 未知字符返回 None
+        }
+    }
+}
 
 #[derive(Debug, PartialEq, Deserialize)]
 pub enum BinaryOp {
@@ -104,6 +118,11 @@ pub enum Expr {
     Integer(i64),
     Float(f64),
     String(String),
+    // 一元表达式
+    UnaryOp {
+        op: UnaryOp,
+        expr: Box<Expr>,
+    },
     /// 二元运算表达式
     BinaryOp {
         /// 运算符
@@ -138,6 +157,11 @@ pub enum Expr {
     IndexAccess {
         array: Box<Expr>,
         index: Box<Expr>,
+    },
+    // 变量声明
+    VariableDeclaration {
+        name: String,
+        initializer: Option<Box<Expr>>,
     },
 }
 
@@ -217,6 +241,23 @@ impl PrefixParselet for StringLiteral {
             parse_string_literal(raw).unwrap_or_else(|| panic!("Invalid string literal: {}", raw));
 
         Expr::String(s)
+    }
+}
+
+/// 一元运算符解析器
+struct UnaryOperatorParselet {
+    op: UnaryOp,
+}
+
+impl PrefixParselet for UnaryOperatorParselet {
+    fn parse(&self, parser: &mut PrattParser, _token: LexedToken) -> Expr {
+        // 解析操作数，使用 Prefix 优先级
+        let expr = parser.parse_expression(PrecedenceLevel::Prefix);
+
+        Expr::UnaryOp {
+            op: self.op.clone(),
+            expr: Box::new(expr),
+        }
     }
 }
 
@@ -386,6 +427,42 @@ impl InfixParselet for IndexParselet {
     }
 }
 
+struct VarDeclarationParselet;
+impl PrefixParselet for VarDeclarationParselet {
+    fn parse(&self, parser: &mut PrattParser, _token: LexedToken) -> Expr {
+        // 获取变量名
+        let name_token = parser
+            .parser
+            .consume_token()
+            .expect("Expected identifier after 'var' keyword");
+
+        if !matches!(name_token.token, Token::Identifier) {
+            panic!("Expected identifier after 'var' keyword");
+        }
+
+        let name = parser.parser.token_source(&name_token).to_string();
+
+        // 消费无效token (如有)
+        parser.parser.consume_until_token();
+
+        // 检查是否有初始化表达式
+        let initializer = if parser.parser.peek(0).map(|t| t.token) == Some(Token::Assign) {
+            // 消费等号
+            parser.parser.consume_token();
+
+            // 消费等号后的无效token (如有)
+            parser.parser.consume_until_token();
+
+            // 解析初始化表达式，使用最低优先级
+            Some(Box::new(parser.parse_expression(PrecedenceLevel::Lowest)))
+        } else {
+            None
+        };
+
+        Expr::VariableDeclaration { name, initializer }
+    }
+}
+
 /// Pratt Parser 结构体
 pub struct PrattParser<'core> {
     /// 前缀解析函数映射表，key 是 Token 类型，value 是实现了 PrefixParselet trait 的解析器
@@ -412,7 +489,7 @@ impl<'a> PrattParser<'a> {
     pub fn parse_expression(&mut self, min_precedence: PrecedenceLevel) -> Expr {
         // 先解析前缀表达式
         let mut left: Expr = self.parse_prefix();
-        println!("左边输出1: {:?}", left);
+        println!("前缀表达式 = {:?}", left);
         // self.parser.push_node_with_start_span(node, start_span)
         // 消费下一个无效token
         self.parser.consume_until_token();
@@ -424,12 +501,15 @@ impl<'a> PrattParser<'a> {
             // 且优先级足够高时才继续循环
             let current_prec = self.current_precedence();
             if current_prec <= min_precedence {
+                println!("停止爬升，当前优先级({:?}) <= 最小优先级({:?})", current_prec, min_precedence);
                 break;
             }
 
-            let op = self.parser.consume_token(); // 消耗当前中缀运算符 Token
-            left = self.parse_infix(left, op.expect("No such token")); // 解析中缀表达式，将左操作数和运算符传递给中缀解析子句
-            println!("左边输出2: {:?}", left);
+            let op = self.parser.consume_token().expect("No token for infix"); // 消耗当前中缀运算符 Token
+            println!("处理运算符 = {:?}, 优先级 = {:?}", op.token, current_prec);
+
+            left = self.parse_infix(left, op); // 解析中缀表达式，将左操作数和运算符传递给中缀解析子句
+            println!("完成中缀组合 = {:?}", left);
             // 消费下一个无效token
             self.parser.consume_until_token();
         }
@@ -453,6 +533,8 @@ impl<'a> PrattParser<'a> {
             .unwrap_or_else(|| panic!("No prefix parselet for: {:?}", token_type))
             .clone();
 
+        // 消费无效token
+        self.parser.consume_until_token();
         parselet.parse(self, token)
     }
 
@@ -520,6 +602,14 @@ pub fn create_pratt_parser<'a>(parser: &'a mut ParserCore<'a>) -> PrattParser<'a
         .with_prefix(Token::RoundOpen, GroupParselet)
         .with_prefix(Token::Identifier, IdentifierParselet)
         .with_prefix(Token::SquareOpen, ArrayParselet)
+        .with_prefix(Token::Var, VarDeclarationParselet)
+        .with_prefix(
+            Token::Subtract,
+            UnaryOperatorParselet {
+                op: UnaryOp::Negate,
+            },
+        )
+        .with_prefix(Token::Not, UnaryOperatorParselet { op: UnaryOp::Not })
         .with_infix(
             Token::Add,
             BinaryOpParselet {
@@ -1048,7 +1138,7 @@ mod tests {
     //     );
     // }
 
-    // 数组操作结合 对
+    // 数组操作结合 ✅
     #[test]
     fn test_ternary_with_array_ops() {
         let source = "list.length > 0 ? list[0] : [1, 2, 3]";
@@ -1075,5 +1165,287 @@ mod tests {
                 ])),
             }
         );
+    }
+
+    #[test]
+    fn test_simple_var_declaration() {
+        let source = "var x";
+        let expr = parse_expr(source);
+        println!("{:?}", expr);
+        assert_eq!(
+            expr,
+            Expr::VariableDeclaration {
+                name: "x".to_string(),
+                initializer: None,
+            }
+        );
+    }
+
+    #[test]
+    fn test_var_with_initializer() {
+        let source = "var y = 10";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::VariableDeclaration {
+                name: "y".to_string(),
+                initializer: Some(Box::new(Expr::Integer(10))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_var_with_complex_expression() {
+        let source = "var result = (a + b) * c";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::VariableDeclaration {
+                name: "result".to_string(),
+                initializer: Some(Box::new(Expr::BinaryOp {
+                    op: BinaryOp::Multiply,
+                    left: Box::new(Expr::BinaryOp {
+                        op: BinaryOp::Add,
+                        left: Box::new(Expr::Identifier("a".to_string())),
+                        right: Box::new(Expr::Identifier("b".to_string())),
+                    }),
+                    right: Box::new(Expr::Identifier("c".to_string())),
+                })),
+            }
+        );
+    }
+
+    #[test]
+    fn test_var_with_function_call() {
+        let source = "var avg = calculate(values)";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::VariableDeclaration {
+                name: "avg".to_string(),
+                initializer: Some(Box::new(Expr::Call {
+                    func: Box::new(Expr::Identifier("calculate".to_string())),
+                    args: vec![Expr::Identifier("values".to_string())],
+                })),
+            }
+        );
+    }
+
+    #[test]
+    fn test_var_with_ternary() {
+        let source = "var max = a > b ? a : b";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::VariableDeclaration {
+                name: "max".to_string(),
+                initializer: Some(Box::new(Expr::Ternary {
+                    cond_expr: Box::new(Expr::BinaryOp {
+                        op: BinaryOp::Greater,
+                        left: Box::new(Expr::Identifier("a".to_string())),
+                        right: Box::new(Expr::Identifier("b".to_string())),
+                    }),
+                    then_expr: Box::new(Expr::Identifier("a".to_string())),
+                    else_expr: Box::new(Expr::Identifier("b".to_string())),
+                })),
+            }
+        );
+    }
+
+    #[test]
+    fn test_var_with_member_access() {
+        let source = "var price = product.details.price";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::VariableDeclaration {
+                name: "price".to_string(),
+                initializer: Some(Box::new(Expr::MemberAccess {
+                    object: Box::new(Expr::MemberAccess {
+                        object: Box::new(Expr::Identifier("product".to_string())),
+                        member: "details".to_string(),
+                    }),
+                    member: "price".to_string(),
+                })),
+            }
+        );
+    }
+
+    #[test]
+    fn test_var_with_array_access() {
+        let source = "var first = items[0]";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::VariableDeclaration {
+                name: "first".to_string(),
+                initializer: Some(Box::new(Expr::IndexAccess {
+                    array: Box::new(Expr::Identifier("items".to_string())),
+                    index: Box::new(Expr::Integer(0)),
+                })),
+            }
+        );
+    }
+
+    #[test]
+    fn test_var_with_array_literal() {
+        let source = "var points = [10, 20, 30]";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::VariableDeclaration {
+                name: "points".to_string(),
+                initializer: Some(Box::new(Expr::ArrayLiteral(vec![
+                    Expr::Integer(10),
+                    Expr::Integer(20),
+                    Expr::Integer(30),
+                ]))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_var_with_complex_initializer() {
+        let source = "var signal = close > sma(close, 20) ? 1 : close < sma(close, 20) ? -1 : 0";
+        let expr = parse_expr(source);
+
+        println!("\n最终语法树:  {:?}", expr);
+
+        if let Expr::VariableDeclaration { name, initializer } = expr {
+            assert_eq!(name, "signal");
+            assert!(initializer.is_some());
+            if let Some(init) = initializer {
+                if let Expr::Ternary { .. } = *init {
+                    // 验证是三元表达式
+                    assert!(true);
+                } else {
+                    panic!("Expected ternary expression in initializer");
+                }
+            }
+        } else {
+            panic!("Expected variable declaration");
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "Expected identifier after 'var' keyword")]
+    fn test_invalid_var_declaration() {
+        let source = "var 123";
+        parse_expr(source);
+    }
+
+    #[test]
+    fn test_var_with_identifier_initializer() {
+        let source = "var copy = original";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::VariableDeclaration {
+                name: "copy".to_string(),
+                initializer: Some(Box::new(Expr::Identifier("original".to_string()))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_var_with_technical_indicator() {
+        let source = "var ma = ta.sma(close, 14)";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::VariableDeclaration {
+                name: "ma".to_string(),
+                initializer: Some(Box::new(Expr::Call {
+                    func: Box::new(Expr::MemberAccess {
+                        object: Box::new(Expr::Identifier("ta".to_string())),
+                        member: "sma".to_string(),
+                    }),
+                    args: vec![Expr::Identifier("close".to_string()), Expr::Integer(14),],
+                })),
+            }
+        );
+    }
+
+    #[test]
+    fn test_unary_negate() {
+        let source = "-42";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::UnaryOp {
+                op: UnaryOp::Negate,
+                expr: Box::new(Expr::Integer(42)),
+            }
+        );
+    }
+
+    #[test]
+    fn test_unary_not() {
+        let source = "!isValid";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::UnaryOp {
+                op: UnaryOp::Not,
+                expr: Box::new(Expr::Identifier("isValid".to_string())),
+            }
+        );
+    }
+
+    #[test]
+    fn test_complex_expression_with_unary() {
+        let source = "a + -b * !c";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::BinaryOp {
+                op: BinaryOp::Add,
+                left: Box::new(Expr::Identifier("a".to_string())),
+                right: Box::new(Expr::BinaryOp {
+                    op: BinaryOp::Multiply,
+                    left: Box::new(Expr::UnaryOp {
+                        op: UnaryOp::Negate,
+                        expr: Box::new(Expr::Identifier("b".to_string())),
+                    }),
+                    right: Box::new(Expr::UnaryOp {
+                        op: UnaryOp::Not,
+                        expr: Box::new(Expr::Identifier("c".to_string())),
+                    }),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn test_multiple_unary() {
+        let source = "!!-x";
+        let expr = parse_expr(source);
+        assert_eq!(
+            expr,
+            Expr::UnaryOp {
+                op: UnaryOp::Not,
+                expr: Box::new(Expr::UnaryOp {
+                    op: UnaryOp::Not,
+                    expr: Box::new(Expr::UnaryOp {
+                        op: UnaryOp::Negate,
+                        expr: Box::new(Expr::Identifier("x".to_string())),
+                    }),
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn test_var_with_unary_in_initializer() {
+        let source = "var result = !condition ? -value : 0";
+        let expr = parse_expr(source);
+
+        if let Expr::VariableDeclaration { name, initializer } = expr {
+            assert_eq!(name, "result");
+            assert!(initializer.is_some());
+            // 进一步验证初始化器中包含一元运算符和三元表达式
+        } else {
+            panic!("Expected variable declaration");
+        }
     }
 }
